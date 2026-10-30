@@ -100,7 +100,12 @@ export function buildIndex({ cinemap, attractions, restaurants, posters = {} }) 
   const spots = adaptSpots(cinemap);
   const works = buildWorks(spots);
   // 포스터는 data/posters.json(scripts/posters.mjs가 만든다)에 있는 작품만 붙는다. 없으면 빈 프레임.
-  for (const w of works) w.poster = posters[w.title]?.path ? POSTER_BASE + posters[w.title].path : null;
+  // 같은 파일에 개봉연도·장르·출연진·줄거리도 있다. 있는 값만 붙고, 없으면 그 줄이 화면에서 빠진다.
+  for (const w of works) {
+    const p = posters[w.title];
+    w.poster = p?.path ? POSTER_BASE + p.path : null;
+    w.info = { year: p?.year || null, genres: p?.genres?.slice(0, 3) || [], cast: p?.cast || [], overview: p?.overview || null };
+  }
   const places = [...adaptAttractions(attractions), ...adaptRestaurants(restaurants)];
   const byId = new Map();
   for (const p of [...spots, ...places]) byId.set(p.id, p);

@@ -99,10 +99,27 @@ export class MainMap {
     drawCourse(this, items);
   }
 
+  // 이 장소를 선택 핀(이름표 포함)으로 띄운다. 근처 장소 핀 자리를 쓴다.
+  showPlace(place) {
+    this.clear('nearby');
+    this.add('nearby', place, { selected: true, label: place.name });
+  }
+
   // padding: [top, right, bottom, left] px
   fit(points, padding = [40, 40, 40, 40]) {
     if (!points.length) return;
     this.map.setBounds(boundsOf(points), ...padding);
+  }
+
+  // 한 곳으로 확대한다. padding은 fit과 같은 [위, 오른쪽, 아래, 왼쪽]이고, 시트에 가리지 않는 가운데에 핀을 둔다.
+  focus(place, level, padding = [0, 0, 0, 0]) {
+    this.map.setLevel(level);
+    this.map.setCenter(ll(place));
+    // 핀이 놓일 화면 위치(가려지지 않는 영역의 가운데)와 정반대 지점을 지도 중심으로 삼는다
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    const px = (padding[3] + w - padding[1]) / 2, py = (padding[0] + h - padding[2]) / 2;
+    const c = this.map.getProjection().coordsFromContainerPoint(new kakao.maps.Point(w - px, h - py));
+    this.map.setCenter(c);
   }
 
   getView() {

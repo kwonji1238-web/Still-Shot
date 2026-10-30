@@ -20,6 +20,7 @@ const mq = matchMedia('(min-width: 768px)');
 const app = {
   db: null,
   mapOk: false,
+  mapChecked: false,
   main: null,
   courses: new Map(), // 촬영지 id → 확정된 코스 (OpenAI 결과 또는 규칙 기반)
   route: null,
@@ -39,6 +40,7 @@ function parse() {
   if (parts[0] === 's' && parts[1]) return { name: 'spot', id: parts[1] };
   if (parts[0] === 'c' && parts[1]) return { name: 'course', id: parts[1] };
   if (parts[0] === 'p' && parts[2]) return { name: 'place', spotId: parts[1], id: parts[2] };
+  if (parts[0] === 'm' && parts[2]) return { name: 'placemap', spotId: parts[1], id: parts[2] };
   return { name: 'home', q: query.get('q') || '' };
 }
 
@@ -48,6 +50,7 @@ const href = {
   spot: (id) => `#/s/${id}`,
   course: (id) => `#/c/${id}`,
   place: (spotId, id) => `#/p/${spotId}/${id}`,
+  placeMap: (spotId, id) => `#/m/${spotId}/${id}`,
 };
 
 function mapVisible() {
@@ -85,7 +88,9 @@ mq.addEventListener('change', () => { saveState(); render(false); });
 
 // ── 렌더 ──
 function render(fresh) {
-  const r = parse();
+  let r = parse();
+  // PC는 S5 패널 뒤에 항상 지도가 있어서 별도 지도 화면이 없다. 장소 상세로 보여 준다.
+  if (r.name === 'placemap' && mq.matches) r = { name: 'place', spotId: r.spotId, id: r.id };
   app.route = r;
   app.token++;
   const st = fresh ? null : history.state;
@@ -115,11 +120,11 @@ function resolve(r) {
     const work = workByTitle.get(r.title);
     return work ? { work } : null;
   }
-  const spot = byId.get(r.name === 'place' ? r.spotId : r.id);
+  const spot = byId.get(r.name === 'place' || r.name === 'placemap' ? r.spotId : r.id);
   if (!spot || spot.kind !== 'spot') return null;
   const work = workByTitle.get(spot.work);
   if (r.name === 'course' && spot.lat === null) return null;
-  if (r.name === 'place') {
+  if (r.name === 'place' || r.name === 'placemap') {
     const place = byId.get(r.id);
     if (!place || place.kind === 'spot' || spot.lat === null) return null;
     return { work, spot, place };
@@ -165,6 +170,7 @@ function updateResults(q) {
 // ── 모바일 ──
 function renderMobile(r, ctx, st) {
   if (r.name === 'work') return renderWorkMobile(r, ctx, st);
+  if (r.name === 'placemap') return renderPlaceMapMobile(ctx, st);
   document.body.dataset.map = 'off';
   if (r.name === 'spot') screen.innerHTML = spotHtml(ctx.spot, false);
   if (r.name === 'course') {
@@ -175,6 +181,24 @@ function renderMobile(r, ctx, st) {
   restoreScroll(st);
 }
 
+// 장소 지도(모바일): 촬영지 핀 + 이 장소 핀을 한눈에. 보기 전용이다.
+function renderPlaceMapMobile({ spot, place }, st) {
+  if (!app.mapChecked) return; // 지도 준비를 기다린다. 준비되면 boot가 다시 그린다
+  if (!app.mapOk) return navigate(href.place(spot.id, place.id), { replace: true });
+  document.body.dataset.map = 'on';
+  app.selectedId = null;
+  screen.innerHTML = R.placeMapScreen(place, { spot, distance: distanceM(spot, place) });
+  app.main.relayout();
+  app.main.clear('course');
+  app.main.clear('nearby');
+  app.main.clear('spots');
+  app.main.add('spots', spot, { no: spot.no, label: spot.name });
+  app.main.showPlace(place);
+  if (st?.view) return app.main.setView(st.view);
+  const card = $('#map-card').getBoundingClientRect().height;
+  app.main.fit([spot, place], [88, 72, card + 48, 72]);
+}
+
 function spotHtml(spot, pc) {
   const work = app.db.workByTitle.get(spot.work);
   const preview = previewCandidates(spot, app.db.places);
@@ -183,7 +207,7 @@ function spotHtml(spot, pc) {
 }
 
 function placeHtml({ spot, place }) {
-  return R.placeScreen(place, { spot, distance: distanceM(spot, place) });
+  return R.placeScreen(place, { spot, distance: distanceM(spot, place), canMap: app.mapOk && place.lat !== null });
 }
 
 // 같은 작품의 다른 촬영지 [제안]: 목록에서 이 촬영지 다음 순서로 최대 3곳
@@ -261,16 +285,34 @@ function fitSelection() {
 function pickSpot(id) {
   if (document.body.dataset.layout === 'pc') return navigate(href.spot(id));
   app.selectedId = id;
-  document.querySelectorAll('.row.is-sel').forEach((el) => { el.classList.remove('is-sel'); el.removeAttribute('aria-current'); });
-  const row = $(`#row-${id}`);
-  if (row) { row.classList.add('is-sel'); row.setAttribute('aria-current', 'true'); }
+  markSelectedRow(id);
   // 접힘에서 핀을 누르면 반 열림까지 올린다 [제안]
-  if (app.sheetLevel === 'collapsed') setSheetLevel('half');
+  if (app.sheetLevel === 'collapsed') setSheetLevel('half', false);
   scrollRowIntoView(id);
   const work = app.db.workByTitle.get(app.db.byId.get(id).work);
   drawWorkPins(work);
-  fitSelection();
+  focusSelection();
   saveState();
+}
+
+// 줄이나 핀을 눌렀을 때: 그 핀으로 확대한다(2026-10-30 사용자 결정). 펼침 시트는 지도가 보이게 반 열림으로 내린다.
+// TODO(열린 결정: 확대 수준) 지금은 카카오 레벨 4. 근처 핀까지 함께 보이게 맞추는 fitSelection은 다른 곳에서 쓴다.
+const FOCUS_LEVEL = 4;
+function focusSelection() {
+  const sel = app.db.byId.get(app.selectedId);
+  if (!sel || sel.lat === null) return;
+  if (app.sheetLevel === 'expanded') setSheetLevel('half', false);
+  app.main.focus(sel, FOCUS_LEVEL, mapPadding());
+}
+
+// 목록에서 선택한 줄 표시(촬영지 줄은 li.row-split 전체에 걸린다)
+function markSelectedRow(id) {
+  document.querySelectorAll('.row.is-sel, .row-split.is-sel').forEach((el) => { el.classList.remove('is-sel'); el.removeAttribute('aria-current'); });
+  const row = id && $(`#row-${id}`);
+  if (!row) return;
+  row.classList.add('is-sel');
+  row.setAttribute('aria-current', 'true');
+  row.closest('.row-split')?.classList.add('is-sel');
 }
 
 function scrollRowIntoView(id) {
@@ -299,7 +341,7 @@ function bindSheet() {
   const sheet = $('#sheet');
   sheet.querySelectorAll('[data-drag]').forEach((handle) => {
     handle.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('button')) return;
+      if (e.target.closest('button, [data-expand]')) return;
       const startY = e.clientY;
       const startH = sheet.getBoundingClientRect().height;
       const hs = sheetHeights();
@@ -373,9 +415,7 @@ function renderPc(r, ctx, st) {
     app.pcWork = work.title;
     $('#pc-q').addEventListener('input', (e) => navigate(href.home(e.target.value)));
   } else {
-    document.querySelectorAll('.row.is-sel').forEach((el) => { el.classList.remove('is-sel'); el.removeAttribute('aria-current'); });
-    const row = app.selectedId && $(`#row-${app.selectedId}`);
-    if (row) { row.classList.add('is-sel'); row.setAttribute('aria-current', 'true'); }
+    markSelectedRow(app.selectedId);
   }
 
   const panel = $('#pc-detail');
@@ -409,6 +449,14 @@ function renderPc(r, ctx, st) {
 
 // ── 이벤트 ──
 document.addEventListener('click', (e) => {
+  const ex = e.target.closest('[data-expand]');
+  if (ex) {
+    const open = ex.classList.toggle('is-open');
+    ex.setAttribute('aria-expanded', String(open));
+    // 시트 안에서 펼치면 글이 들어갈 자리가 모자라니 시트도 끝까지 올린다
+    if (open && ex.closest('#sheet') && !$('#sheet').classList.contains('is-static') && app.sheetLevel !== 'expanded') setSheetLevel('expanded');
+    return;
+  }
   const el = e.target.closest('[data-action]');
   if (!el || el.tagName === 'FORM') return;
   const { action, id, title } = el.dataset;
@@ -416,6 +464,8 @@ document.addEventListener('click', (e) => {
   switch (action) {
     case 'open-work': return navigate(href.work(title));
     case 'open-spot': return navigate(href.spot(id));
+    // 모바일은 지도 확대, PC는 상세 패널(핀을 누를 때와 같다)
+    case 'select-spot': return document.body.dataset.layout === 'pc' ? navigate(href.spot(id)) : pickSpot(id);
     case 'open-course': return navigate(href.course(id));
     case 'open-place': return navigate(href.place(r.id, id));
     case 'view-on-map': return navigate(href.work(app.db.byId.get(id).work, id));
@@ -432,6 +482,12 @@ document.addEventListener('click', (e) => {
       return setSheetLevel(next);
     }
     case 'toggle-theme': return toggleTheme();
+    // 모바일은 장소 지도 화면으로, PC는 뒤에 있는 지도에 이 장소를 띄우고 확대한다
+    case 'view-place-map': {
+      if (document.body.dataset.layout !== 'pc') return navigate(href.placeMap(el.dataset.spot, id));
+      app.main.showPlace(app.db.byId.get(id));
+      return app.main.focus(app.db.byId.get(id), FOCUS_LEVEL, mapPadding());
+    }
     case 'copy': return copyText(el.dataset.text);
     case 'close-panel': return navigate(href.work(app.db.byId.get(r.id).work));
     case 'retry': return boot();
@@ -445,6 +501,7 @@ function back() {
   if (r.name === 'spot') return goBack(href.work(app.db.byId.get(r.id).work));
   if (r.name === 'course') return goBack(href.spot(r.id));
   if (r.name === 'place') return goBack(href.course(r.spotId));
+  if (r.name === 'placemap') return goBack(href.place(r.spotId, r.id));
 }
 
 document.addEventListener('submit', (e) => {
@@ -513,11 +570,13 @@ async function boot() {
   }
   render(false);
   app.mapOk = await mapPromise;
-  if (!app.mapOk) return;
+  app.mapChecked = true;
+  // 지도가 안 되면 지도 화면(#/m)은 장소 상세로 돌려보낸다
+  if (!app.mapOk) return app.route.name === 'placemap' ? render(false) : undefined;
   app.main = new MainMap($('#map'));
-  // 지도가 필요한 화면이면 지도와 함께 다시 그린다(홈·S3·S5는 그대로 둔다)
+  // 지도가 필요한 화면이면 지도와 함께 다시 그린다(홈·S3는 그대로 둔다. S5는 "지도로 보기" 버튼이 지도에 달려 있다)
   const n = app.route.name;
-  if (n !== 'home' && (document.body.dataset.layout === 'pc' || n === 'work' || n === 'course')) {
+  if (n !== 'home' && (document.body.dataset.layout === 'pc' || n === 'work' || n === 'course' || n === 'place' || n === 'placemap')) {
     saveState();
     app.pcWork = null;
     render(false);

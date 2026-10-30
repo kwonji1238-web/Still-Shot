@@ -113,22 +113,46 @@ export function noResultBlock(trending) {
 function spotRow(spot, selectedId) {
   const chip = spot.no == null ? `<span class="chip-kind"><span class="dot-ring" aria-hidden="true"></span>${esc(COPY.addressOnly)}</span>` : '';
   const label = spot.no == null ? '' : `<span class="sr-only">${spot.no}번 </span>`;
-  return `<li><button class="row${spot.id === selectedId ? ' is-sel' : ''}" data-action="open-spot" data-id="${spot.id}" id="row-${spot.id}"${spot.id === selectedId ? ' aria-current="true"' : ''}>
-    ${numBadge(spot.no)}
-    <span class="grow"><span class="t-strong clamp2">${label}${esc(spot.name)}</span><span class="t-sub c-sub">${esc(spot.address)}</span>${chip ? `<span class="meta">${chip}</span>` : ''}</span>
-    ${chev()}
-  </button></li>`;
+  const sel = spot.id === selectedId;
+  const body = `${numBadge(spot.no)}
+    <span class="grow"><span class="t-strong clamp2">${label}${esc(spot.name)}</span><span class="t-sub c-sub">${esc(spot.address)}</span>${chip ? `<span class="meta">${chip}</span>` : ''}</span>`;
+  // 핀이 없는 촬영지는 확대할 곳이 없으니 줄 전체가 상세(E3)로 간다.
+  if (spot.no == null) {
+    return `<li><button class="row" data-action="open-spot" data-id="${spot.id}" id="row-${spot.id}">${body}${chev()}</button></li>`;
+  }
+  // 줄을 누르면 지도에서 그 핀으로 확대하고(2026-10-30 사용자 결정), 오른쪽 화살표를 누르면 상세(S3)로 간다.
+  return `<li class="row-split${sel ? ' is-sel' : ''}">
+    <button class="row" data-action="select-spot" data-id="${spot.id}" id="row-${spot.id}"${sel ? ' aria-current="true"' : ''}>${body}</button>
+    <button class="row-go" data-action="open-spot" data-id="${spot.id}" aria-label="${esc(spot.name)} 상세 보기">${icon.chev()}</button>
+  </li>`;
 }
+
+// 작품 정보. 포스터 옆 칸에는 개봉연도 · 장르 / 출연, 포스터 아래에는 줄거리가 온다. 있는 줄만 나온다(접힌 시트에서는 CSS가 감춘다).
+// 말줄임된 글(data-expand)은 누르면 펼쳐지고 다시 누르면 접힌다.
+function workMeta(info) {
+  if (!info) return '';
+  const yg = [info.year, info.genres.join(', ')].filter(Boolean).join(' · ');
+  return [
+    yg && `<p class="t-sub work-meta">${esc(yg)}</p>`,
+    info.cast.length && `<p class="t-sub c-sub work-meta clamp1" data-expand aria-expanded="false">출연 ${esc(info.cast.join(', '))}</p>`,
+  ].filter(Boolean).join('');
+}
+const workOverview = (info) =>
+  info?.overview ? `<p class="work-overview clamp3" data-expand aria-expanded="false">${esc(info.overview)}</p>` : '';
 
 export function workHead(work, { toggle = null } = {}) {
   const btn = toggle
     ? `<button class="btn-icon is-bare" data-action="sheet-toggle" aria-label="${toggle === 'down' ? '목록 접기' : '목록 펼치기'}">${toggle === 'down' ? icon.down() : icon.up()}</button>`
     : '';
   // 포스터는 data/posters.json에 있을 때만 보이고, 없거나 못 불러오면 빈 프레임이다. 개봉연도·장르·줄거리는 데이터에 없어 작품명 + 촬영지 N곳으로 성립한다(F-15).
+  const meta = workMeta(work.info);
   return `<header class="sheet-head">
+    <div class="sheet-head-row">
     ${work.poster ? `<span class="poster"><img src="${esc(work.poster)}" alt="" loading="lazy" onerror="this.parentNode.className='poster framed';this.remove()"></span>` : `<span class="poster framed" aria-hidden="true">${corners(10)}</span>`}
-    <div class="grow"><h1 class="t-title">${esc(work.title)}</h1><p class="t-sub">${count(work.spots.length)}</p></div>
+    <div class="grow${meta ? ' has-meta' : ''}"><h1 class="t-title${meta ? ' clamp1" data-expand aria-expanded="false' : ''}">${esc(work.title)}</h1><div class="work-facts"><p class="t-sub">${count(work.spots.length)}</p>${meta}</div></div>
     ${btn}
+    </div>
+    ${workOverview(work.info)}
   </header>`;
 }
 
@@ -243,13 +267,13 @@ export function courseBody(course, { showRouteMap }) {
 }
 
 // ── S5 ──
-export function placeScreen(place, { spot, distance }) {
+export function placeScreen(place, { spot, distance, canMap = false }) {
   const back = `<button class="btn-icon" data-action="back" aria-label="뒤로 가기">${icon.back()}</button>`;
   const top = place.photo
     ? `<div class="photo-wrap"><img class="photo" src="${esc(place.photo)}" alt="" data-fallback="remove-photo">${back}</div>`
     : `<div class="lowbar">${back}</div>`;
   const intro = place.intro
-    ? `<section class="stack-8"><h2 class="section-title">${esc(COPY.intro)}</h2><p class="clamp4">${esc(place.intro)}</p></section>`
+    ? `<section class="stack-8"><h2 class="section-title">${esc(COPY.intro)}</h2><p class="clamp4" data-expand aria-expanded="false">${esc(place.intro)}</p></section>`
     : '';
   // TODO(열린 결정: S5 출처 문구) COPY.placeSource가 비어 있으면 칸을 만들지 않는다.
   const src = COPY.placeSource ? `<p class="source">${esc(COPY.placeSource)}</p>` : '';
@@ -261,7 +285,7 @@ export function placeScreen(place, { spot, distance }) {
         <h1 class="t-display">${esc(place.name)}</h1>
         <p class="addr t-sub">${icon.pin()}<span>${esc(place.address)}</span></p>
       </div>
-      <button class="btn btn-ghost" data-action="copy" data-text="${esc(place.address)}">${esc(COPY.copyAddress)}</button>
+      ${canMap ? `<button class="btn btn-ghost" data-action="view-place-map" data-id="${place.id}" data-spot="${spot.id}">${esc(COPY.viewOnMap)}</button>` : ''}
       ${intro}
       <button class="btn btn-ghost" data-action="open-spot" data-id="${spot.id}">${esc(spot.name)} 보러 가기</button>
       ${src}
@@ -270,6 +294,17 @@ export function placeScreen(place, { spot, distance }) {
 }
 
 // ── PC ──
+// 장소 지도(모바일): 촬영지 번호 핀과 이 장소 핀을 한 화면에 보여 주는 보기 전용 지도(2026-10-30 사용자 결정, S5의 "지도로 보기").
+export function placeMapScreen(place, { spot, distance }) {
+  return `
+    <div class="map-ctrl"><button class="btn-icon" data-action="back" aria-label="뒤로 가기">${icon.back()}</button></div>
+    <section class="map-card" id="map-card">
+      <p class="meta"><span class="chip-kind">${KIND_LABEL[place.kind]}</span><span class="t-sub">${esc(spot.name)}에서 직선 ${dist(distance)}</span></p>
+      <h1 class="t-title">${esc(place.name)}</h1>
+      <p class="addr t-sub">${icon.pin()}<span>${esc(place.address)}</span></p>
+    </section>`;
+}
+
 export function pcFrame(work, { selectedId }) {
   return `
     <header class="pc-top">
