@@ -94,7 +94,7 @@
 | event_id | 기록 한 줄의 고유 번호(같은 번호는 두 번 적지 않아요) |
 | session_id | 한 사람이 한 번 진행한 번호 |
 | participant_id | 참가자 번호(P01 등). 이름·연락처·IP는 받지 않아요 |
-| is_test | 연습용이면 TRUE (참가자 번호가 TEST로 시작할 때) |
+| is_test | 연습용이면 TRUE (참가자 번호가 TEST로 시작하거나, 주소에 `dry=1`·`debug=1`이 있을 때) |
 | mode | remote(원격) / inperson(직접 만남) |
 | device | 화면 크기와 기기 종류(예: `390x844 mobile`) |
 | client_ts | 참가자 휴대폰의 시각 |

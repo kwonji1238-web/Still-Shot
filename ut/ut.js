@@ -61,9 +61,10 @@ async function main() {
 
   const w = innerWidth;
   const device = `${w}x${innerHeight} ${w < 768 ? 'mobile' : w < 1024 ? 'tablet' : 'desktop'}`;
-  const isTest = /^TEST/i.test(st.participant); // 연습용 표시만 한다. 거르는 것은 나중에 시트에서
+  const testNumber = /^TEST/i.test(st.participant); // 번호가 TEST로 시작하면 연습용
+  const isTest = testNumber || showLog; // dry·debug로 연 세션도 번호와 상관없이 연습용으로 표시한다. 거르는 것은 나중에 시트에서
   // 시험용 단축: 연습용(TEST) 번호에서만 &fast=1이 먹는다. 다른 번호에서는 무시한다.
-  const fast = params.get('fast') === '1' && isTest;
+  const fast = params.get('fast') === '1' && testNumber; // fast는 번호 규칙(TEST)만 따른다
   if (fast) { Q.tasks.T1.limit_s = Q.fast.T1_limit_s; Q.tasks.T2.limit_s = Q.fast.T2_limit_s; }
 
   const recent = []; // 기록 미리보기 패널용: 최근 이벤트(새것이 앞)
