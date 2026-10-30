@@ -1,0 +1,147 @@
+// 카카오맵 JavaScript SDK 래퍼. SDK가 없거나 실패하면 지도만 빠지고 나머지 화면은 그대로 쓴다.
+// 지도는 라이트·다크 모두 기본(밝은) 타일로 둔다.
+
+import { corners, esc } from './render.js';
+
+const SDK_TIMEOUT_MS = 8000;
+let sdkPromise = null;
+
+export function loadKakao(key) {
+  if (sdkPromise) return sdkPromise;
+  sdkPromise = new Promise((resolve) => {
+    if (!key) return resolve(false);
+    if (window.kakao?.maps?.load) return window.kakao.maps.load(() => resolve(true)); // 이미 로드됨
+    const timer = setTimeout(() => resolve(false), SDK_TIMEOUT_MS);
+    const s = document.createElement('script');
+    s.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false`;
+    s.onerror = () => { clearTimeout(timer); resolve(false); };
+    s.onload = () => {
+      if (!window.kakao?.maps?.load) { clearTimeout(timer); return resolve(false); }
+      window.kakao.maps.load(() => { clearTimeout(timer); resolve(true); });
+    };
+    document.head.appendChild(s);
+  });
+  return sdkPromise;
+}
+
+const ll = (p) => new kakao.maps.LatLng(p.lat, p.lng);
+
+function boundsOf(points) {
+  const b = new kakao.maps.LatLngBounds();
+  if (points.length === 1) {
+    // 핀이 하나면 주변을 조금 넓혀 지나치게 확대되지 않게 한다
+    const p = points[0];
+    b.extend(new kakao.maps.LatLng(p.lat - 0.004, p.lng - 0.004));
+    b.extend(new kakao.maps.LatLng(p.lat + 0.004, p.lng + 0.004));
+  } else points.forEach((p) => b.extend(ll(p)));
+  return b;
+}
+
+function pinEl({ no, selected, label, nearby, clickable }) {
+  const tag = clickable ? 'button' : 'div';
+  const cls = ['pin', 'framed', selected && 'is-sel', nearby && 'is-nearby'].filter(Boolean).join(' ');
+  const size = nearby ? 4 : 6;
+  const aria = clickable ? ` type="button" aria-label="${esc(`${no}번 ${label ?? ''}`)}"` : ' aria-hidden="true"';
+  const el = document.createElement('div');
+  el.className = 'pin-wrap';
+  el.innerHTML =
+    `<${tag} class="${cls}"${aria}>${corners(size, 1.5)}${no != null ? `<span>${no}</span>` : ''}</${tag}>` +
+    (label && (selected || nearby) ? `<span class="pin-label">${esc(label)}</span>` : '');
+  return el;
+}
+
+export class MainMap {
+  constructor(container) {
+    this.el = container;
+    this.map = new kakao.maps.Map(container, { center: new kakao.maps.LatLng(35.1796, 129.0756), level: 8 });
+    this.layers = { spots: [], nearby: [], course: [] };
+    this.line = null;
+  }
+
+  relayout() { this.map.relayout(); }
+
+  clear(layer) {
+    this.layers[layer].forEach((o) => o.setMap(null));
+    this.layers[layer] = [];
+    if (layer === 'course' && this.line) { this.line.setMap(null); this.line = null; }
+  }
+
+  add(layer, place, opts, onClick) {
+    const el = pinEl(opts);
+    if (onClick) el.querySelector('.pin').addEventListener('click', onClick);
+    const o = new kakao.maps.CustomOverlay({
+      position: ll(place), content: el, xAnchor: 0.5, yAnchor: 0.5, clickable: !!onClick,
+      zIndex: opts.selected ? 3 : opts.nearby ? 1 : 2,
+    });
+    o.setMap(this.map);
+    this.layers[layer].push(o);
+  }
+
+  // 촬영지 번호 핀. 목록 번호 = 핀 번호.
+  setSpots(spots, selectedId, onPick) {
+    this.clear('spots');
+    for (const s of spots) {
+      if (s.lat === null) continue;
+      this.add('spots', s, { no: s.no, selected: s.id === selectedId, label: s.name, clickable: true }, () => onPick(s.id));
+    }
+  }
+
+  // 근처 장소 핀 [제안]: 번호 없는 작은 핀 + 이름표, 눌러도 이동하지 않음. 경로선과 섞지 않는다.
+  // TODO(열린 결정: 근처 장소 핀의 모양·선택 해제 방법·뒤로 가기 때 복원 여부)
+  setNearby(candidates) {
+    this.clear('nearby');
+    for (const c of candidates) this.add('nearby', c.place, { nearby: true, label: c.place.name });
+  }
+
+  // 코스 번호 핀과 순서대로 이은 직선 (PC 메인 지도)
+  setCourse(items) {
+    this.clear('course');
+    drawCourse(this, items);
+  }
+
+  // padding: [top, right, bottom, left] px
+  fit(points, padding = [40, 40, 40, 40]) {
+    if (!points.length) return;
+    this.map.setBounds(boundsOf(points), ...padding);
+  }
+
+  getView() {
+    const c = this.map.getCenter();
+    return { lat: c.getLat(), lng: c.getLng(), level: this.map.getLevel() };
+  }
+
+  setView(v) {
+    this.map.setLevel(v.level);
+    this.map.setCenter(new kakao.maps.LatLng(v.lat, v.lng));
+  }
+}
+
+function drawCourse(target, items) {
+  const pts = items.map((it) => it.place).filter((p) => p.lat !== null);
+  items.forEach((it, i) => {
+    if (it.place.lat === null) return;
+    target.add('course', it.place, { no: i + 1 });
+  });
+  // 핀이 하나뿐이면 선 없이 핀만
+  if (pts.length > 1) {
+    // TODO(열린 결정: 코스 경로선의 색·굵기) PRD 6장 제안 1px 직선. 지도 고정 색을 쓴다.
+    target.line = new kakao.maps.Polyline({
+      path: pts.map(ll), strokeWeight: 1, strokeColor: '#1A1917', strokeOpacity: 1, strokeStyle: 'solid',
+    });
+    target.line.setMap(target.map);
+  }
+}
+
+// 모바일 S4의 전체 경로 지도: 보기 전용 [제안]
+export function createRouteMap(container, items) {
+  const map = new kakao.maps.Map(container, {
+    center: ll(items[0].place), level: 5, draggable: false, scrollwheel: false, disableDoubleClickZoom: true,
+  });
+  map.setZoomable(false);
+  const target = { map, line: null, add(layer, place, opts) {
+    new kakao.maps.CustomOverlay({ position: ll(place), content: pinEl(opts), xAnchor: 0.5, yAnchor: 0.5, zIndex: 2 }).setMap(map);
+  } };
+  drawCourse(target, items);
+  map.setBounds(boundsOf(items.map((it) => it.place)), 32, 32, 32, 32);
+  return map;
+}

@@ -1,0 +1,9 @@
+[build]
+  command = "node scripts/build.mjs"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[[headers]]
+  for = "/data/*"
+  [headers.values]
+    Cache-Control = "public, max-age=3600"

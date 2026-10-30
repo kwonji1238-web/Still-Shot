@@ -1,0 +1,14 @@
+{
+  "name": "스틸스팟",
+  "short_name": "스틸스팟",
+  "description": "영화·드라마 속 촬영지를 지도에서 찾고, 근처 관광지·식당·카페까지 코스로 이어 가 볼 수 있는 서비스예요.",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "background_color": "#F6F5F2",
+  "theme_color": "#F6F5F2",
+  "icons": [
+    { "src": "icon/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,150 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { buildIndex, adaptRestaurants } from '../src/data.js';
+import { searchWorks, findWorkByName, normalize } from '../src/search.js';
+import { distanceM, formatDistance } from '../src/geo.js';
+import { previewCandidates, courseCandidates } from '../src/candidates.js';
+import { ruleCourse, validateAiCourse, cleanNote } from '../src/course.js';
+import { TRENDING } from '../src/settings.js';
+
+const read = (f) => JSON.parse(readFileSync(new URL(`../data/${f}`, import.meta.url)));
+const db = buildIndex({
+  cinemap: read('cinemap.json'),
+  attractions: read('attractions.json'),
+  restaurants: read('restaurants.json'),
+});
+
+test('데이터: 촬영지 2,193건, 좌표 없음 111건, 작품 428개, 모두 region', () => {
+  assert.equal(db.spots.length, 2193);
+  assert.equal(db.spots.filter((s) => s.lat === null).length, 111);
+  assert.equal(db.works.length, 428);
+  assert.ok([...db.byId.values()].every((p) => p.region === 'busan'));
+});
+
+test('데이터: 좌표 없는 촬영지는 번호 없이 목록 맨 뒤', () => {
+  for (const w of db.works) {
+    const firstNull = w.spots.findIndex((s) => s.no === null);
+    if (firstNull < 0) continue;
+    assert.ok(w.spots.slice(firstNull).every((s) => s.lat === null && s.no === null));
+    w.spots.slice(0, firstNull).forEach((s, i) => assert.equal(s.no, i + 1));
+  }
+});
+
+test('데이터: 카페 분류와 휴업 제외', () => {
+  const raw = [
+    { UC_SEQ: 1, MAIN_TITLE: 'A커피', LAT: 35, LNG: 129, category: 'cafe', closed_notice: false },
+    { UC_SEQ: 2, MAIN_TITLE: 'B', LAT: 35, LNG: 129, category: 'cafe_candidate', closed_notice: false },
+    { UC_SEQ: 3, MAIN_TITLE: 'C', LAT: 35, LNG: 129, category: 'restaurant', closed_notice: false },
+    { UC_SEQ: 4, MAIN_TITLE: 'D', LAT: 35, LNG: 129, category: 'restaurant', closed_notice: true },
+  ];
+  assert.deepEqual(adaptRestaurants(raw).map((p) => p.kind), ['cafe', 'cafe', 'restaurant']);
+});
+
+test('데이터: 식당·카페 사진은 주소가 있을 때만', () => {
+  const raw = read('restaurants.json').filter((r) => !r.closed_notice);
+  const food = db.places.filter((p) => p.kind === 'restaurant' || p.kind === 'cafe');
+  assert.equal(food.filter((p) => p.thumb).length, raw.filter((r) => r.MAIN_IMG_THUMB?.trim()).length);
+  assert.ok(food.every((p) => p.photo === p.thumb));
+  assert.ok(food.filter((p) => !p.thumb).every((p) => p.photo === null));
+});
+
+test('요즘 뜨는 촬영지 3편이 데이터에 있다', () => {
+  for (const t of TRENDING) assert.ok(findWorkByName(db.works, t), t);
+});
+
+test('검색: 띄어쓰기 무시 부분 일치, 앞부분 일치가 위', () => {
+  const r = searchWorks(db.works, '고백의 역사');
+  assert.equal(r[0].work.title, '넷플릭스 고백의역사');
+  const r2 = searchWorks(db.works, '친구');
+  assert.ok(r2[0].work.title.startsWith('친구'));
+  assert.deepEqual(searchWorks(db.works, '   '), []);
+  assert.deepEqual(searchWorks(db.works, 'zzzz없는작품'), []);
+});
+
+test('검색: 굵게 할 구간은 원문 위치 기준, 공백 제외', () => {
+  const works = [{ title: '서울의 봄', spots: [] }];
+  assert.deepEqual(searchWorks(works, '의봄')[0].ranges, [[2, 3], [4, 5]]);
+  assert.equal(normalize(' A b '), 'ab');
+});
+
+test('거리 표기: 10m 단위 m, 1,000m 이상 km', () => {
+  assert.deepEqual(formatDistance(324), { value: '320', unit: 'm' });
+  assert.deepEqual(formatDistance(4), { value: '0', unit: 'm' });
+  assert.deepEqual(formatDistance(994), { value: '990', unit: 'm' });
+  assert.deepEqual(formatDistance(995), { value: '1.0', unit: 'km' });
+  assert.deepEqual(formatDistance(1249), { value: '1.2', unit: 'km' });
+  assert.deepEqual(formatDistance(12345), { value: '12.3', unit: 'km' });
+});
+
+test('거리: 위도 0.01도 ≈ 1.11km', () => {
+  const d = distanceM({ lat: 35, lng: 129 }, { lat: 35.01, lng: 129 });
+  assert.ok(Math.abs(d - 1112) < 5);
+});
+
+const spot = { id: 's', kind: 'spot', lat: 35, lng: 129 };
+const at = (id, kind, dLat) => ({ id, kind, name: id, lat: 35 + dLat, lng: 129 });
+const places = [
+  at('a1', 'attraction', 0.003), at('a2', 'attraction', 0.001), at('a3', 'attraction', 0.002),
+  at('r1', 'restaurant', 0.004), at('r2', 'restaurant', 0.0005),
+  at('c1', 'cafe', 0.001), at('far', 'attraction', 0.5),
+];
+
+test('후보: 미리보기는 관광지 2 + 식당 1, 가까운 순, 반경 밖 제외', () => {
+  const ids = previewCandidates(spot, places).map((c) => c.place.id);
+  assert.deepEqual(ids, ['a2', 'a3', 'r2']);
+});
+
+test('후보: 코스는 카페 1까지, 모자라면 있는 것만', () => {
+  assert.deepEqual(courseCandidates(spot, places).map((c) => c.place.id), ['a2', 'a3', 'r2', 'c1']);
+  assert.deepEqual(courseCandidates(spot, [places[0]]).map((c) => c.place.id), ['a1']);
+  assert.deepEqual(courseCandidates({ id: 'x', lat: null, lng: null }, places), []);
+});
+
+test('규칙 코스: 촬영지 → 관광지 → 식당 → 카페', () => {
+  const c = courseCandidates(spot, places);
+  const kinds = ruleCourse(spot, [...c].reverse()).map((i) => i.place.kind ?? 'spot');
+  assert.deepEqual(kinds, ['spot', 'attraction', 'attraction', 'restaurant', 'cafe']);
+});
+
+test('AI 검증: 후보와 같은 집합이면 통과, 촬영지는 맨 앞', () => {
+  const c = courseCandidates(spot, places);
+  const ok = validateAiCourse(spot, c, { order: ['c1', 'r2', 'a3', 'a2'], notes: { c1: '쉬어 가기 좋아요' } });
+  assert.deepEqual(ok.items.map((i) => i.place.id), ['s', 'c1', 'r2', 'a3', 'a2']);
+  assert.equal(ok.items[1].note, '쉬어 가기 좋아요');
+});
+
+test('AI 검증: 지어낸 장소·빠짐·중복·모양 오류는 거절', () => {
+  const c = courseCandidates(spot, places);
+  assert.equal(validateAiCourse(spot, c, { order: ['a2', 'a3', 'r2', 'made-up'] }), null);
+  assert.equal(validateAiCourse(spot, c, { order: ['a2', 'a3', 'r2'] }), null);
+  assert.equal(validateAiCourse(spot, c, { order: ['a2', 'a2', 'r2', 'c1'] }), null);
+  assert.equal(validateAiCourse(spot, c, { order: 'a2' }), null);
+  assert.equal(validateAiCourse(spot, c, null), null);
+});
+
+test('AI 설명: 느낌표·이모지·지역명·너무 긴 글은 버림', () => {
+  assert.equal(cleanNote('좋아요!'), null);
+  assert.equal(cleanNote('바다가 보여요 🌊'), null);
+  assert.equal(cleanNote('부산의 명소예요'), null);
+  assert.equal(cleanNote('가'.repeat(81)), null);
+  assert.equal(cleanNote(' 걷기 좋아요 '), '걷기 좋아요');
+});
+
+test('AI 근거 정보: 관광지는 소개, 식당·카페는 대표메뉴(가격 제외), 없으면 빈 글자', async () => {
+  const { placeInfo } = await import('../src/course.js');
+  const attr = db.places.find((p) => p.kind === 'attraction' && p.intro);
+  const info = placeInfo(attr);
+  assert.ok(info.length > 0 && info.length <= 300);
+  assert.ok(info.includes(attr.intro.slice(0, 10)));
+  assert.equal(placeInfo({ kind: 'cafe', menu: '아메리카노 ￦5,000 소금빵 ￦4,000' }), '대표메뉴: 아메리카노 소금빵');
+  assert.equal(placeInfo({ kind: 'restaurant', menu: null }), '');
+  assert.equal(placeInfo({ kind: 'restaurant', menu: '곤드레밥'.repeat(100) }).length, 120);
+});
+
+test('데이터: 대표메뉴는 식당·카페에만, 소개 제목은 관광지에만', () => {
+  const food = db.places.filter((p) => p.kind === 'restaurant' || p.kind === 'cafe');
+  assert.ok(food.some((p) => p.menu));
+  assert.ok(food.every((p) => !('intro' in p)));
+  assert.ok(db.places.filter((p) => p.kind === 'attraction').every((p) => p.title));
+});
