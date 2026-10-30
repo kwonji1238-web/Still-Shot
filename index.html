@@ -25,6 +25,8 @@
   <script>try { var t = localStorage.getItem('stillspot-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}</script>
   <!-- 카카오 JavaScript 키. 없으면(404) 지도 없이 목록·상세·코스로 동작한다. -->
   <script src="config.js" onerror="window.STILLSPOT_CONFIG = window.STILLSPOT_CONFIG || {}"></script>
+  <!-- UT 모드: 주소에 ut=1이 있을 때만 ut/ut.js를 불러온다. 없으면 아무것도 불러오지 않는다 -->
+  <script>if (/[?&]ut=1(&|$)/.test(location.search)) { var u = document.createElement('script'); u.type = 'module'; u.src = 'ut/ut.js'; document.head.appendChild(u); }</script>
   <script type="module" src="src/app.js"></script>
 </head>
 <body>

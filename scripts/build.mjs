@@ -31,4 +31,20 @@ const fromDotenv = () => {
 };
 const key = process.env.KAKAO_JS_KEY || fromDotenv();
 writeFileSync(`${OUT}/config.js`, `window.STILLSPOT_CONFIG = ${JSON.stringify({ kakaoJsKey: key })};\n`);
+
+// UT 모드(?ut=1일 때만 쓰임). 시트 주소·토큰은 Netlify 환경변수 UT_ENDPOINT·UT_TOKEN(로컬은 .env)에서 읽어 dist/ut/config.js로 만든다.
+// 값은 출력하지 않는다. apps-script/와 SETUP.md는 배포하지 않는다.
+const envVal = (name) => {
+  if (process.env[name]) return process.env[name];
+  if (!existsSync('.env')) return '';
+  const line = readFileSync('.env', 'utf8').split(/\r?\n/).find((l) => l.startsWith(`${name}=`));
+  return line ? line.slice(name.length + 1).trim().replace(/^["']|["']$/g, '') : '';
+};
+mkdirSync(`${OUT}/ut`, { recursive: true });
+for (const f of ['ut.js', 'log.js', 'ut.css', 'questions.json']) cpSync(`ut/${f}`, `${OUT}/ut/${f}`);
+const utEndpoint = envVal('UT_ENDPOINT');
+const utToken = envVal('UT_TOKEN');
+writeFileSync(`${OUT}/ut/config.js`, `export default ${JSON.stringify({ endpoint: utEndpoint, token: utToken })};\n`);
+console.log(`UT 설정 (UT_ENDPOINT ${utEndpoint ? '있음' : '없음'}, UT_TOKEN ${utToken ? '있음' : '없음'})`);
+
 console.log(`dist/ 준비 완료 (KAKAO_JS_KEY ${key ? '있음' : '없음 — 지도 없이 동작'})`);
