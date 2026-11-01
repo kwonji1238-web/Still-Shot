@@ -2,13 +2,14 @@
 // 경로: #/ (S1·E1·E2) · #/w/<작품명>[?sel=<촬영지id>] (S2) · #/s/<id> (S3·E3) · #/c/<id> (S4) · #/p/<촬영지id>/<장소id> (S5)
 // 뒤로 가기는 브라우저 history를 쓰고, 떠나는 화면의 지도 위치·시트 높이·스크롤을 history.state에 저장해 복원한다.
 
-import { loadData } from './data.js';
-import { searchWorks, findWorkByName } from './search.js';
+import { loadData, spotsAtSamePlace } from './data.js';
+import { searchWorks } from './search.js';
 import { previewCandidates, courseCandidates } from './candidates.js';
 import { ruleCourse } from './course.js';
 import { fetchAiCourse } from './api.js';
 import { distanceM } from './geo.js';
-import { TRENDING, SAME_WORK_CHIPS, TOAST_MS, COPY } from './settings.js';
+import { TOAST_MS, COPY, BUSAN_BOUNDS } from './settings.js';
+import { pickFeatured } from './featured.js';
 import * as R from './render.js';
 import { loadKakao, MainMap, createRouteMap } from './map.js';
 import { toggleTheme } from './theme.js';
@@ -28,6 +29,11 @@ const app = {
   selectedId: null,
   token: 0, // 화면이 바뀌면 늦게 끝난 비동기 작업을 버린다
   pcWork: null, // PC에서 지금 그려진 목록 패널의 작품
+  featured: null,
+  placeFocused: false, // PC에서 장소 상세의 "지도로 보기"로 지도를 그 장소에 맞춰 둔 상태(이때 X나 다른 핀을 눌러도 지도를 움직이지 않는다)
+  keepView: false, // 이번 화면 전환에서는 지도를 다시 맞추지 않는다(선택을 풀고 작품 목록으로 돌아올 때)
+  carryView: null, // 선택을 풀고 첫 화면으로 돌아갈 때 지도를 그 자리에 두기 위한 값(한 번만 쓴다)
+  searching: false, // 첫 화면에서 검색창을 열어 지도 위에 결과를 보이는 중
 };
 
 // ── 라우팅 ──
@@ -54,7 +60,7 @@ const href = {
 };
 
 function mapVisible() {
-  return document.body.dataset.map === 'on' && app.main && document.body.dataset.screen !== 'home';
+  return document.body.dataset.map === 'on' && app.main;
 }
 
 function saveState() {
@@ -91,6 +97,7 @@ function render(fresh) {
   let r = parse();
   // PC는 S5 패널 뒤에 항상 지도가 있어서 별도 지도 화면이 없다. 장소 상세로 보여 준다.
   if (r.name === 'placemap' && mq.matches) r = { name: 'place', spotId: r.spotId, id: r.id };
+  app.prevRoute = app.route;
   app.route = r;
   app.token++;
   const st = fresh ? null : history.state;
@@ -102,7 +109,7 @@ function render(fresh) {
     app.pcWork = null;
     document.body.dataset.map = 'off';
     renderHome(r.q || st?.q || '', fresh && !!r.q);
-    restoreScroll(st);
+    drawHomeMap(st);
     return;
   }
 
@@ -111,6 +118,8 @@ function render(fresh) {
 
   if (layout === 'pc') renderPc(r, ctx, st);
   else renderMobile(r, ctx, st);
+  app.keepView = false;
+  if (r.name !== 'place') app.placeFocused = false;
 }
 
 // 경로에서 작품·촬영지·장소를 찾는다. 없으면 null.
@@ -137,14 +146,23 @@ function restoreScroll(st) {
 }
 
 // ── S1·E1·E2 ──
-function trendingWorks() {
-  return TRENDING.map((t) => findWorkByName(app.db.works, t)).filter(Boolean);
+// 검색 화면에 보일 촬영지(고정 + 무작위). 무작위는 방문마다 한 번만 뽑아 입력 중에 바뀌지 않게 한다.
+function featured() {
+  return (app.featured ||= pickFeatured(app.db.spots));
 }
 
+// 첫 화면(v1): 지도 위에 검색창이 떠 있고, 검색창을 열면 결과가 지도를 덮는다.
+// 지도가 안 되면 검색창을 연 모습(결과 화면)을 그대로 첫 화면으로 쓴다.
 function renderHome(q, focus) {
   screen.innerHTML = R.homeScreen(q, { credit: app.db.hasPosters });
   const input = $('#q');
+  app.searching = q.trim().length > 0;
   updateResults(q);
+  syncHomeMode();
+  input.addEventListener('focus', () => {
+    app.searching = true;
+    syncHomeMode();
+  });
   input.addEventListener('input', () => {
     updateResults(input.value);
     history.replaceState({ ...(history.state || {}), q: input.value }, '');
@@ -155,29 +173,116 @@ function renderHome(q, focus) {
   }
 }
 
+function syncHomeMode() {
+  const home = $('#home');
+  if (!home) return;
+  const noMap = app.mapChecked && !app.mapOk;
+  // 모바일은 결과 화면이 지도를 덮고, PC는 검색창 아래 패널로 열린다. 지도가 안 될 때는 PC도 결과 화면을 첫 화면으로 쓴다.
+  const panel = app.searching && !noMap && document.body.dataset.layout === 'pc';
+  home.classList.toggle('is-searching', (app.searching && !panel) || noMap);
+  home.classList.toggle('is-panel', panel);
+  home.classList.toggle('no-map', noMap);
+}
+
+// 모든 촬영지 핀을 부산 전체가 보이게 그린다(핀이 한 곳도 안 보이는 일이 없게 좌표 있는 촬영지를 모두 포함).
+function drawHomeMap(st) {
+  const mapOn = app.mapOk && !!app.main;
+  document.body.dataset.map = mapOn ? 'on' : 'off';
+  if (!mapOn) return;
+  app.main.relayout();
+  app.main.clear('course');
+  app.main.clear('nearby');
+  app.main.setAll(app.db.spots, pickHomePin);
+  if (app.carryView) {
+    const v = app.carryView;
+    app.carryView = null;
+    return app.main.restoreCarried(v);
+  }
+  if (st?.view) return app.main.setView(st.view);
+  // 위쪽은 상단 메뉴와 검색창, 아래쪽은 본인 위치 버튼이 가리는 만큼 비운다
+  app.main.fit(app.db.spots.filter((s) => s.lat !== null), HOME_PADDING);
+}
+
+// 핀을 누르면 그 작품의 지도 화면(S2)에서 이 핀을 강조한다. PC는 상세 패널을 연다. [제안]
+// TODO(열린 결정: 첫 화면 핀을 눌렀을 때 이동 대상)
+function pickHomePin(spot) {
+  navigate(document.body.dataset.layout === 'pc' ? href.spot(spot.id) : href.work(spot.work, spot.id));
+}
+
 function updateResults(q) {
   const searching = q.trim().length > 0;
-  $('#cancel').hidden = !searching;
   const results = $('#results');
   if (!searching) {
-    results.innerHTML = R.trendingBlock(trendingWorks());
+    results.innerHTML = R.featuredBlock(featured());
     return;
   }
   const hits = searchWorks(app.db.works, q);
-  results.innerHTML = hits.length ? R.matchBlock(hits) : R.noResultBlock(trendingWorks());
+  results.innerHTML = hits.length ? R.matchBlock(hits) : R.noResultBlock(featured());
+}
+
+// 검색을 닫고 지도로 돌아간다(입력한 글자도 지운다)
+function closeSearch() {
+  const input = $('#q');
+  if (!input) return;
+  input.value = '';
+  input.blur();
+  updateResults('');
+  history.replaceState({ ...(history.state || {}), q: '' }, '');
+  app.searching = false;
+  syncHomeMode();
+}
+
+// 본인 위치: 지도를 그 위치로 옮기고 점을 찍는다. 부산 밖이거나 위치를 못 받으면 안내 팝업을 띄운다(이동하기 → 부산 전체).
+// X로 닫으면 지도는 그 자리에 그대로 둔다. 위치는 저장하지 않고 서버로 보내지 않는다.
+const HOME_PADDING = [152, 24, 88, 24]; // 위쪽은 상단 메뉴와 검색창, 아래쪽은 본인 위치 버튼이 가리는 만큼
+const inBusan = (p) => p.lat >= BUSAN_BOUNDS.south && p.lat <= BUSAN_BOUNDS.north && p.lng >= BUSAN_BOUNDS.west && p.lng <= BUSAN_BOUNDS.east;
+
+function locateMe() {
+  if (!navigator.geolocation) return openLocateDialog();
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => {
+      const me = { lat: coords.latitude, lng: coords.longitude };
+      if (app.main) {
+        app.main.showMe(me);
+        app.main.focus(me, 5, HOME_PADDING);
+      }
+      if (!inBusan(me)) openLocateDialog();
+    },
+    () => openLocateDialog(), // 거부·실패: 지도는 그대로 두고 안내만
+    { timeout: 8000, maximumAge: 60000 },
+  );
+}
+
+function goToBusan() {
+  closeLocateDialog();
+  if (app.main) app.main.fit(app.db.spots.filter((s) => s.lat !== null), HOME_PADDING);
+}
+
+function openLocateDialog() {
+  const dlg = $('#locate-dialog');
+  if (!dlg) return;
+  dlg.hidden = false;
+  dlg.querySelector('[data-action="close-dialog"]').focus();
+}
+
+function closeLocateDialog() {
+  const dlg = $('#locate-dialog');
+  if (!dlg || dlg.hidden) return;
+  dlg.hidden = true;
+  $('.locate')?.focus();
 }
 
 // ── 모바일 ──
 function renderMobile(r, ctx, st) {
   if (r.name === 'work') return renderWorkMobile(r, ctx, st);
   if (r.name === 'placemap') return renderPlaceMapMobile(ctx, st);
+  if (r.name === 'spot') return renderSpotMobile(ctx, st);
   document.body.dataset.map = 'off';
-  if (r.name === 'spot') screen.innerHTML = spotHtml(ctx.spot, false);
   if (r.name === 'course') {
     screen.innerHTML = R.courseScreen(ctx.spot, { work: ctx.work, pc: false });
     runCourse(ctx.spot, false);
   }
-  if (r.name === 'place') screen.innerHTML = placeHtml(ctx);
+  if (r.name === 'place') screen.innerHTML = placeHtml(ctx, false);
   restoreScroll(st);
 }
 
@@ -199,24 +304,40 @@ function renderPlaceMapMobile({ spot, place }, st) {
   app.main.fit([spot, place], [88, 72, card + 48, 72]);
 }
 
-function spotHtml(spot, pc) {
-  const work = app.db.workByTitle.get(spot.work);
-  const preview = previewCandidates(spot, app.db.places);
-  const hasCourse = courseCandidates(spot, app.db.places).length > 0;
-  return R.spotDetail(spot, { work, preview, hasCourse, others: sameWork(work, spot), pc });
+// 촬영지 상세 내용에 필요한 것: 이 장소의 작품들, 근처 미리보기, 코스 가능 여부
+function spotCtx(spot) {
+  const { workByTitle, spots, places } = app.db;
+  return {
+    works: spotsAtSamePlace(spot, spots).map((s) => ({ spot: s, work: workByTitle.get(s.work) })),
+    preview: previewCandidates(spot, places),
+    hasCourse: courseCandidates(spot, places).length > 0,
+  };
 }
 
-function placeHtml({ spot, place }) {
-  return R.placeScreen(place, { spot, distance: distanceM(spot, place), canMap: app.mapOk && place.lat !== null });
+function spotHtml(spot) {
+  return R.spotDetail(spot, spotCtx(spot));
 }
 
-// 같은 작품의 다른 촬영지 [제안]: 목록에서 이 촬영지 다음 순서로 최대 3곳
-function sameWork(work, spot) {
-  const list = work.spots;
-  const i = list.findIndex((s) => s.id === spot.id);
-  const out = [];
-  for (let k = 1; k < list.length && out.length < SAME_WORK_CHIPS; k++) out.push(list[(i + k) % list.length]);
-  return out;
+function placeHtml({ spot, place }, pc = false) {
+  return R.placeScreen(place, { spot, distance: distanceM(spot, place), canMap: app.mapOk && place.lat !== null, pc });
+}
+
+// ── S3 (모바일): 지도 위 촬영지 바텀시트. 좌표가 없는 촬영지(E3)나 지도가 안 될 때는 지도 없이 목록형으로 ──
+function renderSpotMobile({ spot, work }, st) {
+  const mapOn = app.mapOk && spot.lat !== null;
+  document.body.dataset.map = mapOn ? 'on' : 'off';
+  app.selectedId = spot.id;
+  app.sheetLevel = mapOn ? st?.sheet || 'half' : 'half';
+  screen.innerHTML = R.spotScreenMobile(spot, spotCtx(spot), { mapOn, level: app.sheetLevel });
+  if (!mapOn) return restoreScroll(st);
+  setSheetLevel(app.sheetLevel, false);
+  bindSheet();
+  if (st?.listScroll) $('#sheet-body').scrollTop = st.listScroll;
+  app.main.relayout();
+  app.main.clear('course');
+  drawWorkPins(work);
+  if (st?.view) app.main.setView(st.view);
+  else fitSelection();
 }
 
 // ── S2 (모바일): 지도 + 시트 3단계 ──
@@ -250,13 +371,16 @@ function renderWorkMobile(r, { work }, st) {
   drawWorkPins(work);
   if (st?.view) app.main.setView(st.view);
   else if (app.selectedId) fitSelection();
-  else fitWork(work);
+  else if (!app.keepView) fitWork(work);
 }
 
 function drawWorkPins(work) {
   app.main.setSpots(work.spots, app.selectedId, pickSpot);
   const sel = app.selectedId && app.db.byId.get(app.selectedId);
-  if (sel && sel.lat !== null) app.main.setNearby(previewCandidates(sel, app.db.places));
+  if (sel && sel.lat !== null) {
+    // 근처 장소 핀을 누르면 그 장소의 상세(S5). 돌아오면 지금 화면이다.
+    app.main.setNearby(previewCandidates(sel, app.db.places), (place) => navigate(href.place(sel.id, place.id)));
+  }
   else app.main.clear('nearby');
 }
 
@@ -282,8 +406,36 @@ function fitSelection() {
 }
 
 // 핀을 누르면: 모바일은 줄 강조 + 근처 핀, PC는 상세 패널을 연다.
+// 선택을 풀고 첫 화면(전체 지도)으로. 지도는 지금 보던 자리에 그대로 둔다.
+function backToMap() {
+  app.carryView = mapVisible() ? app.main.carryView() : null;
+  navigate(href.home());
+}
+
+// 선택된 핀을 한 번 더 누르면 선택이 풀리고 작품 목록(아무것도 선택 안 된 상태)으로 돌아간다. 작품 시트·목록과 지도 위치는 그대로(2026-11-01 사용자 요청).
+function deselectSpot() {
+  const r = app.route;
+  if (r.name === 'spot') {
+    app.keepView = true;
+    return navigate(href.work(app.db.byId.get(r.id).work), { replace: true });
+  }
+  // 작품 시트에서 선택한 촬영지만 푼다
+  const work = app.db.workByTitle.get(r.title);
+  app.selectedId = null;
+  markSelectedRow(null);
+  drawWorkPins(work);
+  history.replaceState({ ...(history.state || {}) }, '', href.work(r.title));
+  app.route = { ...r, sel: null };
+  saveState();
+}
+
 function pickSpot(id) {
-  if (document.body.dataset.layout === 'pc') return navigate(href.spot(id));
+  // 이미 선택된 핀을 한 번 더 누르면 선택이 풀린다
+  if (id === app.selectedId && (app.route.name === 'work' || app.route.name === 'spot')) return deselectSpot();
+  if (document.body.dataset.layout === 'pc' || app.route.name === 'spot') {
+    if (app.placeFocused) app.keepView = true;
+    return navigate(href.spot(id));
+  }
   app.selectedId = id;
   markSelectedRow(id);
   // 접힘에서 핀을 누르면 반 열림까지 올린다 [제안]
@@ -307,12 +459,11 @@ function focusSelection() {
 
 // 목록에서 선택한 줄 표시(촬영지 줄은 li.row-split 전체에 걸린다)
 function markSelectedRow(id) {
-  document.querySelectorAll('.row.is-sel, .row-split.is-sel').forEach((el) => { el.classList.remove('is-sel'); el.removeAttribute('aria-current'); });
+  document.querySelectorAll('.row.is-sel').forEach((el) => { el.classList.remove('is-sel'); el.removeAttribute('aria-current'); });
   const row = id && $(`#row-${id}`);
   if (!row) return;
   row.classList.add('is-sel');
   row.setAttribute('aria-current', 'true');
-  row.closest('.row-split')?.classList.add('is-sel');
 }
 
 function scrollRowIntoView(id) {
@@ -320,6 +471,13 @@ function scrollRowIntoView(id) {
   const body = $('#sheet-body');
   if (!row || !body) return;
   body.scrollTop = row.offsetTop - body.offsetTop - 8;
+}
+
+// 바텀시트가 떠 있을 때 지도의 빈 곳을 누르면 시트를 접는다(2026-11-01 사용자 요청)
+function collapseSheet() {
+  const sheet = $('#sheet');
+  if (!sheet || sheet.classList.contains('is-static') || app.sheetLevel === 'collapsed') return;
+  setSheetLevel('collapsed');
 }
 
 function setSheetLevel(level, save = true) {
@@ -376,7 +534,7 @@ addEventListener('resize', () => {
 });
 
 // ── S4: 코스 ──
-async function runCourse(spot, pc) {
+async function runCourse(spot, pc, keepView = false) {
   const token = app.token;
   const status = $('#course-status');
   let course = app.courses.get(spot.id);
@@ -398,7 +556,7 @@ async function runCourse(spot, pc) {
     app.main.clear('spots');
     app.main.clear('nearby');
     app.main.setCourse(course.items);
-    app.main.fit(course.items.map((it) => it.place), mapPadding());
+    if (!keepView) app.main.fit(course.items.map((it) => it.place), mapPadding());
   }
 }
 
@@ -410,7 +568,8 @@ function renderPc(r, ctx, st) {
   document.body.dataset.map = mapOn ? 'on' : 'off';
   app.selectedId = r.name === 'work' ? null : ctx.spot.id;
 
-  if (app.pcWork !== work.title || !$('#pc-list')) {
+  const sameWork = app.pcWork === work.title && !!$('#pc-list');
+  if (!sameWork) {
     screen.innerHTML = R.pcFrame(work, { selectedId: app.selectedId });
     app.pcWork = work.title;
     $('#pc-q').addEventListener('input', (e) => navigate(href.home(e.target.value)));
@@ -421,21 +580,26 @@ function renderPc(r, ctx, st) {
   const panel = $('#pc-detail');
   panel.hidden = r.name === 'work';
   panel.scrollTop = 0;
-  if (r.name === 'spot') panel.innerHTML = spotHtml(ctx.spot, true);
+  if (r.name === 'spot') panel.innerHTML = spotHtml(ctx.spot);
   if (r.name === 'course') panel.innerHTML = R.courseScreen(ctx.spot, { work, pc: true });
-  if (r.name === 'place') panel.innerHTML = placeHtml(ctx);
+  if (r.name === 'place') panel.innerHTML = placeHtml(ctx, true);
 
   if (mapOn) {
     app.main.relayout();
     if (r.name === 'work' || r.name === 'spot') {
       app.main.clear('course');
       drawWorkPins(work);
-      if (st?.view) app.main.setView(st.view);
-      else if (app.selectedId && ctx.spot.lat !== null) fitSelection();
-      else if (r.name === 'work') fitWork(work);
+      if (st?.view && !app.keepView) app.main.setView(st.view);
+      else if (app.selectedId && ctx.spot.lat !== null && !app.keepView) fitSelection();
+      // 촬영지·코스·장소 상세 패널을 X로 닫을 때는 그 자리에서 패널만 닫는다(지도를 다시 맞추지 않는다)
+      else if (r.name === 'work' && !app.keepView && !(sameWork && ['spot', 'course', 'place'].includes(app.prevRoute?.name))) fitWork(work);
     }
   }
-  if (r.name === 'course') runCourse(ctx.spot, true);
+  if (r.name === 'course') {
+    // 장소 상세(S5)에서 X로 돌아왔을 때는 지도가 튀지 않게 떠날 때의 위치를 되살린다
+    runCourse(ctx.spot, true, !!st?.view || app.keepView);
+    if (st?.view && mapOn && !app.keepView) app.main.setView(st.view);
+  }
   if (r.name === 'place' && mapOn) {
     // S5에서도 코스 핀·선을 그대로 둔다
     const course = app.courses.get(ctx.spot.id);
@@ -448,7 +612,17 @@ function renderPc(r, ctx, st) {
 }
 
 // ── 이벤트 ──
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const dlg = $('#locate-dialog');
+  if (dlg && !dlg.hidden) return closeLocateDialog();
+  if ($('#home.is-panel')) closeSearch();
+});
+
 document.addEventListener('click', (e) => {
+  if (e.target.id === 'locate-dialog') return closeLocateDialog(); // 팝업 바깥을 눌러도 닫힌다
+  // PC 검색 패널은 패널·검색창·상단 메뉴 밖(지도 등)을 누르면 닫힌다
+  if ($('#home.is-panel') && !e.target.closest('.search-row, .search-panel, .home-top, .dialog-back')) closeSearch();
   const ex = e.target.closest('[data-expand]');
   if (ex) {
     const open = ex.classList.toggle('is-open');
@@ -464,19 +638,16 @@ document.addEventListener('click', (e) => {
   switch (action) {
     case 'open-work': return navigate(href.work(title));
     case 'open-spot': return navigate(href.spot(id));
-    // 모바일은 지도 확대, PC는 상세 패널(핀을 누를 때와 같다)
-    case 'select-spot': return document.body.dataset.layout === 'pc' ? navigate(href.spot(id)) : pickSpot(id);
     case 'open-course': return navigate(href.course(id));
     case 'open-place': return navigate(href.place(r.id, id));
     case 'view-on-map': return navigate(href.work(app.db.byId.get(id).work, id));
     case 'home': return navigate(href.home());
-    case 'search-cancel': {
-      const input = $('#q');
-      input.value = '';
-      updateResults('');
-      history.replaceState({ ...(history.state || {}), q: '' }, '');
-      return;
-    }
+    case 'cancel-select': return backToMap();
+    case 'search-cancel': return closeSearch();
+    case 'pick-spot-card': return pickHomePin(app.db.byId.get(id));
+    case 'locate': return locateMe();
+    case 'locate-go': return goToBusan();
+    case 'close-dialog': return closeLocateDialog();
     case 'sheet-toggle': {
       const next = { collapsed: 'half', half: 'expanded', expanded: 'half' }[app.sheetLevel];
       return setSheetLevel(next);
@@ -486,6 +657,7 @@ document.addEventListener('click', (e) => {
     case 'view-place-map': {
       if (document.body.dataset.layout !== 'pc') return navigate(href.placeMap(el.dataset.spot, id));
       app.main.showPlace(app.db.byId.get(id));
+      app.placeFocused = true;
       return app.main.focus(app.db.byId.get(id), FOCUS_LEVEL, mapPadding());
     }
     case 'copy': return copyText(el.dataset.text);
@@ -500,7 +672,10 @@ function back() {
   if (r.name === 'work') return goBack(href.home());
   if (r.name === 'spot') return goBack(href.work(app.db.byId.get(r.id).work));
   if (r.name === 'course') return goBack(href.spot(r.id));
-  if (r.name === 'place') return goBack(href.course(r.spotId));
+  if (r.name === 'place') {
+    if (app.placeFocused) app.keepView = true; // 지도로 보기로 맞춰 둔 자리에서 패널만 닫는다
+    return goBack(href.spot(r.spotId));
+  }
   if (r.name === 'placemap') return goBack(href.place(r.spotId, r.id));
 }
 
@@ -525,6 +700,10 @@ document.addEventListener(
       const tile = img.parentElement;
       tile.classList.add('framed');
       tile.innerHTML = R.corners(10);
+    } else if (img.dataset.fallback === 'poster') {
+      const box = img.parentElement;
+      box.className = 'poster is-logo';
+      box.innerHTML = R.logoMark();
     } else if (img.dataset.fallback === 'remove-photo') {
       img.parentElement.className = 'lowbar';
       img.remove();
@@ -572,11 +751,17 @@ async function boot() {
   app.mapOk = await mapPromise;
   app.mapChecked = true;
   // 지도가 안 되면 지도 화면(#/m)은 장소 상세로 돌려보낸다
-  if (!app.mapOk) return app.route.name === 'placemap' ? render(false) : undefined;
+  if (!app.mapOk) {
+    if (app.route.name === 'home') return syncHomeMode(); // 지도 없이 검색 화면을 첫 화면으로
+    return app.route.name === 'placemap' ? render(false) : undefined;
+  }
   app.main = new MainMap($('#map'));
-  // 지도가 필요한 화면이면 지도와 함께 다시 그린다(홈·S3는 그대로 둔다. S5는 "지도로 보기" 버튼이 지도에 달려 있다)
+  app.main.onMapClick = collapseSheet;
   const n = app.route.name;
-  if (n !== 'home' && (document.body.dataset.layout === 'pc' || n === 'work' || n === 'course' || n === 'place' || n === 'placemap')) {
+  // 첫 화면은 입력 중인 글자를 지우지 않도록 다시 그리지 않고 지도만 붙인다
+  if (n === 'home') return drawHomeMap(history.state);
+  // 지도가 필요한 화면이면 지도와 함께 다시 그린다(S3는 그대로 둔다. S5는 "지도로 보기" 버튼이 지도에 달려 있다)
+  if (document.body.dataset.layout === 'pc' || n === 'work' || n === 'spot' || n === 'course' || n === 'place' || n === 'placemap') {
     saveState();
     app.pcWork = null;
     render(false);

@@ -22,6 +22,27 @@ const bearer = key.length > 60;
 const PREFIX = /^(넷플릭스|디즈니\+?|티빙|웨이브|쿠팡플레이|왓챠|애플tv\+?|tvn|jtbc|kbs|mbc|sbs)\s+/i;
 const clean = (t) => t.replace(PREFIX, '').trim();
 
+// 데이터의 작품명은 띄어쓰기가 빠진 것이 있어(예: "폭싹속았수다") TMDB가 못 찾는다. 그런 작품은 공식 제목으로 바꿔 찾는다.
+// 시즌이 붙은 작품은 시리즈 포스터와 정보를 쓴다.
+const ALIASES = {
+  '넷플릭스 폭싹속았수다': '폭싹 속았수다',
+  '넷플릭스 고백의역사': '고백의 역사',
+  'tvN 일타스캔들': '일타 스캔들',
+  'SBS 모범택시2': '모범택시',
+  'MBC 노무사노무진': '노무사 노무진',
+  'ENA 야한사진관': '야한 사진관',
+  'tvN 작은아씨들': '작은 아씨들',
+  'SBS 펜트하우스 시즌 3': '펜트하우스',
+  'TV조선 마녀는 살아있다': '마녀는 살아있다',
+  'tvN 연예인매니저로 살아남기': '연예인 매니저로 살아남기',
+  'ENA  취하는 로맨스': '취하는 로맨스',
+  '티빙 개미가 타고있어요': '개미가 타고 있어요',
+  '왓챠 좋소좋소좋소기업 시즌2': '좋소좋소좋소기업',
+  '왓챠 좋소좋소좋소기업 시즌3': '좋소좋소좋소기업',
+  '디즈니+ 더존: 버텨야산다2': '더 존: 버텨야 산다',
+  'OCN 우월한 하루': '우월한 하루',
+};
+
 async function api(path, params = {}) {
   const url = new URL(`https://api.themoviedb.org/3/${path}`);
   url.searchParams.set('language', 'ko-KR');
@@ -40,7 +61,7 @@ const related = (a, b) => {
 };
 
 async function lookup(title) {
-  const query = clean(title);
+  const query = ALIASES[title] ?? clean(title);
   const { results } = await api('search/multi', { query });
   const hit = results.find((r) => (r.media_type === 'movie' || r.media_type === 'tv') && r.poster_path);
   if (!hit) return null;

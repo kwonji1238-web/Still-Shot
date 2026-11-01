@@ -17,6 +17,7 @@ export const icon = {
   chev: () => svg('<path d="M9 5l7 7-7 7"/>', 18),
   up: () => svg('<path d="M5 15l7-7 7 7"/>'),
   down: () => svg('<path d="M5 9l7 7 7-7"/>'),
+  locate: () => svg('<circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.75"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>'),
   pin: () => svg('<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0113 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.25"/>', 16),
   warn: () =>
     `<svg class="warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5L2.5 20h19L12 3.5z"/><path d="M12 10v4.5M12 17.25v.01" stroke-linecap="round"/></svg>`,
@@ -55,24 +56,40 @@ const dist = (m) => {
 };
 const kindDist = (kind, m) => `${KIND_LABEL[kind]} · 직선 ${dist(m)}`;
 const source = () => `<p class="source">${esc(COPY.source)}</p>`;
+// 바텀시트가 올라와 있어도 맨 위의 서비스명 줄(로고·테마 버튼)은 그대로 둔다(2026-11-01 사용자 요청). 홈의 상단 메뉴와 같은 모양.
+const topBrand = () =>
+  `<header class="home-top"><span class="brand-lock">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></span>${themeButton()}</header>`;
 const chev = () => `<span class="chev">${icon.chev()}</span>`;
 
 // ── S1·E1·E2 ──
 export function homeScreen(q, { credit = false } = {}) {
   return `
   <div class="home" id="home">
-    <header class="home-top"><span class="brand-lock">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></span>${themeButton()}</header>
-    <h1 class="t-display hero">${esc(COPY.heroCopy)}</h1>
+    <header class="home-top">
+      <button class="btn-icon is-bare home-back" type="button" data-action="search-cancel" aria-label="${esc(COPY.backToMap)}">${icon.back()}</button>
+      <span class="brand-lock">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></span>${themeButton()}
+    </header>
+    <h1 class="sr-only">${esc(COPY.heroCopy)}</h1>
     <form class="search-row" role="search" data-action="search-submit">
       <label class="search">
         <span class="sr-only">작품 검색</span>
         <input id="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="${esc(COPY.searchPlaceholder)}" value="${esc(q)}">
         <button class="btn-icon" type="submit" aria-label="검색">${icon.search()}</button>
       </label>
-      <button class="btn-text" type="button" data-action="search-cancel" id="cancel" hidden>${esc(COPY.cancel)}</button>
     </form>
-    <div class="results" id="results"></div>
-    ${credit ? `<p class="source home-credit">${esc(COPY.tmdbCredit)}</p>` : ''}
+    <div class="search-panel" id="search-panel">
+      <div class="results" id="results"></div>
+      ${credit ? `<p class="source home-credit">${esc(COPY.tmdbCredit)}</p>` : ''}
+    </div>
+  </div>
+  <button class="btn-icon locate" type="button" data-action="locate" aria-label="${esc(COPY.locate)}">${icon.locate()}</button>
+  <div class="dialog-back" id="locate-dialog" hidden>
+    <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="locate-dialog-title" aria-describedby="locate-dialog-body">
+      <button class="btn-icon is-bare dialog-x" type="button" data-action="close-dialog" aria-label="${esc(COPY.close)}">${icon.close()}</button>
+      <h2 class="t-title" id="locate-dialog-title">${esc(COPY.locateDialog)}</h2>
+      <p class="t-body c-sub" id="locate-dialog-body">${esc(COPY.locateBody)}</p>
+      <button class="btn btn-fill" type="button" data-action="locate-go">${esc(COPY.locateGo)}</button>
+    </section>
   </div>`;
 }
 
@@ -82,10 +99,20 @@ const workRow = (work, label, strong = true) => `
     ${chev()}
   </button></li>`;
 
-export function trendingBlock(works) {
-  if (!works.length) return '';
-  return `<section class="stack-8"><h2 class="section-title">${esc(COPY.trendingLabel)}</h2>
-    <ul class="list">${works.map((w) => workRow(w)).join('')}</ul></section>`;
+// 검색 전·결과 없음: 섹션마다 촬영지 사진 카드 두 개. 사진이 없으면 빈 프레임.
+const spotCard = (c) => `
+  <li><button class="photo-card" data-action="pick-spot-card" data-id="${c.spot.id}">
+    ${c.image
+      ? `<span class="photo-card-img"><img src="${esc(c.image)}" alt="" loading="lazy" data-fallback="tile"></span>`
+      : `<span class="photo-card-img framed" aria-hidden="true">${corners(14)}</span>`}
+    <span class="t-strong clamp1">${esc(c.label)}</span><span class="t-sub c-sub clamp1">${esc(c.work)}</span>${c.credit ? `<span class="t-micro c-sub">${esc(c.credit)}</span>` : ''}
+  </button></li>`;
+
+const featuredSection = (title, cards) =>
+  cards.length ? `<section class="stack-12"><h2 class="section-title">${esc(title)}</h2><ul class="photo-grid">${cards.map(spotCard).join('')}</ul></section>` : '';
+
+export function featuredBlock({ trending, photo }) {
+  return featuredSection(COPY.trendingLabel, trending) + featuredSection(COPY.photoSpotLabel, photo);
 }
 
 function highlight(title, ranges) {
@@ -104,9 +131,8 @@ export function matchBlock(hits) {
       .join('')}</ul></section>`;
 }
 
-export function noResultBlock(trending) {
-  const [title, body] = COPY.noResult.split('. ');
-  return `<section class="empty-msg" aria-live="polite"><h2 class="t-title">${esc(title)}</h2><p class="t-sub c-sub">${esc(body)}</p></section>${trendingBlock(trending)}`;
+export function noResultBlock(featured) {
+  return `<section class="empty-msg" aria-live="polite"><h2 class="t-title">${esc(COPY.noResult)}</h2></section>${featuredBlock(featured)}`;
 }
 
 // ── S2 시트 · PC 목록 패널 ──
@@ -114,45 +140,35 @@ function spotRow(spot, selectedId) {
   const chip = spot.no == null ? `<span class="chip-kind"><span class="dot-ring" aria-hidden="true"></span>${esc(COPY.addressOnly)}</span>` : '';
   const label = spot.no == null ? '' : `<span class="sr-only">${spot.no}번 </span>`;
   const sel = spot.id === selectedId;
-  const body = `${numBadge(spot.no)}
-    <span class="grow"><span class="t-strong clamp2">${label}${esc(spot.name)}</span><span class="t-sub c-sub">${esc(spot.address)}</span>${chip ? `<span class="meta">${chip}</span>` : ''}</span>`;
-  // 핀이 없는 촬영지는 확대할 곳이 없으니 줄 전체가 상세(E3)로 간다.
-  if (spot.no == null) {
-    return `<li><button class="row" data-action="open-spot" data-id="${spot.id}" id="row-${spot.id}">${body}${chev()}</button></li>`;
-  }
-  // 줄을 누르면 지도에서 그 핀으로 확대하고(2026-10-30 사용자 결정), 오른쪽 화살표를 누르면 상세(S3)로 간다.
-  return `<li class="row-split${sel ? ' is-sel' : ''}">
-    <button class="row" data-action="select-spot" data-id="${spot.id}" id="row-${spot.id}"${sel ? ' aria-current="true"' : ''}>${body}</button>
-    <button class="row-go" data-action="open-spot" data-id="${spot.id}" aria-label="${esc(spot.name)} 상세 보기">${icon.chev()}</button>
-  </li>`;
+  // 줄 어디를 눌러도 상세(S3·E3)로 간다(2026-11-01 사용자 결정). 지도에서 그 핀을 보는 것은 핀을 눌러서 한다.
+  return `<li><button class="row${sel ? ' is-sel' : ''}" data-action="open-spot" data-id="${spot.id}" id="row-${spot.id}"${sel ? ' aria-current="true"' : ''}>${numBadge(spot.no)}
+    <span class="grow"><span class="t-strong clamp2">${label}${esc(spot.name)}</span><span class="t-sub c-sub">${esc(spot.address)}</span>${chip ? `<span class="meta">${chip}</span>` : ''}</span>${chev()}</button></li>`;
 }
 
-// 작품 정보. 포스터 옆 칸에는 개봉연도 · 장르 / 출연, 포스터 아래에는 줄거리가 온다. 있는 줄만 나온다(접힌 시트에서는 CSS가 감춘다).
+// 작품 정보. 포스터 옆 칸은 촬영지 N곳 / 작품명 / 개봉연도 | 장르 순이다(줄거리·출연은 2026-11-01 사용자 요청으로 뺐다). 있는 줄만 나온다(접힌 시트에서는 CSS가 감춘다).
 // 말줄임된 글(data-expand)은 누르면 펼쳐지고 다시 누르면 접힌다.
 function workMeta(info) {
   if (!info) return '';
-  const yg = [info.year, info.genres.join(', ')].filter(Boolean).join(' · ');
-  return [
-    yg && `<p class="t-sub work-meta">${esc(yg)}</p>`,
-    info.cast.length && `<p class="t-sub c-sub work-meta clamp1" data-expand aria-expanded="false">출연 ${esc(info.cast.join(', '))}</p>`,
-  ].filter(Boolean).join('');
+  const yg = [info.year, info.genres.join(', ')].filter(Boolean).join(' | ');
+  return yg ? `<p class="t-sub work-meta">${esc(yg)}</p>` : '';
 }
-const workOverview = (info) =>
-  info?.overview ? `<p class="work-overview clamp3" data-expand aria-expanded="false">${esc(info.overview)}</p>` : '';
+
+// 포스터가 없거나 못 불러오면 서비스 로고를 보인다(2026-11-01 와이어프레임). 못 불러온 경우는 app.js의 error 처리가 바꾼다.
+const posterBox = (work) =>
+  work.poster
+    ? `<span class="poster"><img src="${esc(work.poster)}" alt="" loading="lazy" data-fallback="poster"></span>`
+    : `<span class="poster is-logo" aria-hidden="true">${logoMark()}</span>`;
 
 export function workHead(work, { toggle = null } = {}) {
   const btn = toggle
     ? `<button class="btn-icon is-bare" data-action="sheet-toggle" aria-label="${toggle === 'down' ? '목록 접기' : '목록 펼치기'}">${toggle === 'down' ? icon.down() : icon.up()}</button>`
     : '';
-  // 포스터는 data/posters.json에 있을 때만 보이고, 없거나 못 불러오면 빈 프레임이다. 개봉연도·장르·줄거리는 데이터에 없어 작품명 + 촬영지 N곳으로 성립한다(F-15).
-  const meta = workMeta(work.info);
   return `<header class="sheet-head">
     <div class="sheet-head-row">
-    ${work.poster ? `<span class="poster"><img src="${esc(work.poster)}" alt="" loading="lazy" onerror="this.parentNode.className='poster framed';this.remove()"></span>` : `<span class="poster framed" aria-hidden="true">${corners(10)}</span>`}
-    <div class="grow${meta ? ' has-meta' : ''}"><h1 class="t-title${meta ? ' clamp1" data-expand aria-expanded="false' : ''}">${esc(work.title)}</h1><div class="work-facts"><p class="t-sub">${count(work.spots.length)}</p>${meta}</div></div>
+    ${posterBox(work)}
+    <div class="grow"><p class="t-sub">${count(work.spots.length)}</p><h1 class="t-title clamp1" data-expand aria-expanded="false">${esc(work.title)}</h1>${workMeta(work.info)}</div>
     ${btn}
     </div>
-    ${workOverview(work.info)}
   </header>`;
 }
 
@@ -167,7 +183,8 @@ export function workScreenMobile(work, { mapOn, selectedId, level }) {
       <section class="sheet is-static">${workHead(work)}<div class="sheet-body">${spotList(work, selectedId)}</div></section>`;
   }
   return `
-    <div class="map-ctrl">
+    ${topBrand()}
+    <div class="map-ctrl is-below">
       <button class="btn-icon" data-action="back" aria-label="뒤로 가기">${icon.back()}</button>
     </div>
     <section class="sheet" id="sheet" data-level="${level}">
@@ -178,11 +195,36 @@ export function workScreenMobile(work, { mapOn, selectedId, level }) {
 }
 
 // ── S3 · E3 ──
-export function spotDetail(spot, { work, preview, hasCourse, others, pc }) {
+// 촬영지 바텀시트(모바일)와 상세 패널(PC)이 같은 내용을 쓴다(2026-11-01 와이어프레임):
+// 사진(없으면 로고) + 이름·주소·장면 설명 / 이 장소에서 촬영된 작품 / 근처에 이런 곳 / 코스 보기(얇은 버튼) / 다녀온 후기.
+// 촬영지 데이터에는 사진이 없어서 사진 칸은 늘 로고다. 장면 설명은 data/scenes.json에 있는 촬영지에만 나온다.
+function spotHead(spot, { toggle = null } = {}) {
+  const btn = toggle
+    ? `<button class="btn-icon is-bare" data-action="sheet-toggle" aria-label="${toggle === 'down' ? '목록 접기' : '목록 펼치기'}">${toggle === 'down' ? icon.down() : icon.up()}</button>`
+    : '';
+  const scene = spot.scene ? `<p class="spot-scene t-sub clamp2" data-expand aria-expanded="false">${esc(spot.scene)}</p>` : '';
+  // 사진이 있는 촬영지(settings.js의 SPOT_PHOTOS)는 그 사진을, 없거나 못 불러오면 로고를 보인다
+  const thumb = spot.photo
+    ? `<span class="poster"><img src="${esc(spot.photo)}" alt="" loading="lazy" data-fallback="poster"></span>`
+    : `<span class="poster is-logo" aria-hidden="true">${logoMark()}</span>`;
+  const credit = spot.photoCredit ? `<p class="t-micro c-sub">${esc(spot.photoCredit)}</p>` : '';
+  return `<header class="sheet-head">
+    <div class="sheet-head-row">
+    ${thumb}
+    <div class="grow"><h1 class="t-title clamp2" data-expand aria-expanded="false">${esc(spot.name)}</h1><p class="t-sub c-sub">${esc(spot.address)}</p>${scene}${credit}</div>
+    ${btn}
+    </div>
+  </header>`;
+}
+
+const workThumb = ({ spot, work }, current) =>
+  `<button class="work-thumb" data-action="view-on-map" data-id="${spot.id}"${current ? ' aria-current="true"' : ''}>${posterBox(work)}<span class="t-micro clamp2">${esc(work.title)}</span></button>`;
+
+// works: [{ spot, work }] 이 촬영지의 작품이 맨 앞
+function spotBody(spot, { works, preview, hasCourse }) {
   const coords = spot.lat !== null;
-  const top = pc
-    ? `<div class="lowbar is-close"><button class="btn-icon" data-action="close-panel" aria-label="닫기">${icon.close()}</button></div>`
-    : `<div class="lowbar"><button class="btn-icon" data-action="back" aria-label="뒤로 가기">${icon.back()}</button></div>`;
+  const worksHere = `<section class="stack-8"><h2 class="section-title">${esc(COPY.worksHereTitle)}</h2>
+    <div class="hscroll">${works.map((w, i) => workThumb(w, i === 0)).join('')}</div></section>`;
 
   const nearby = preview.length
     ? `<section class="nearby stack-8">
@@ -197,33 +239,46 @@ export function spotDetail(spot, { work, preview, hasCourse, others, pc }) {
       </section>`
     : '';
 
-  const sameWork =
-    !pc && others.length
-      ? `<section class="stack-8"><h2 class="section-title">${esc(COPY.sameWorkTitle)}</h2>
-          <div class="hscroll">${others
-            .map((o) => `<button class="chip-move" data-action="open-spot" data-id="${o.id}">${esc(o.name)}</button>`)
-            .join('')}</div></section>`
-      : '';
+  // 코스는 부가 기능이라 채우지 않은 얇은 줄 버튼이다. 주인공은 촬영지다.
+  const course = coords && hasCourse
+    ? `<button class="btn-line" data-action="open-course" data-id="${spot.id}"><span>${esc(COPY.courseButton)}</span>${chev()}</button>`
+    : '';
 
-  return `<article class="page">
-    ${top}
-    <div class="page-body">
-      <div class="stack-12">
-        <div><span class="chip-info">${esc(work.title)}</span></div>
-        <h1 class="t-display">${esc(spot.name)}</h1>
-        <p class="addr t-sub">${icon.pin()}<span>${esc(spot.address)}</span></p>
-      </div>
-      ${
-        coords
-          ? pc ? '' : `<button class="btn btn-fill" data-action="view-on-map" data-id="${spot.id}">${esc(COPY.viewOnMap)}</button>`
-          : `<p class="notice">${esc(COPY.noCoords)}</p>
-             <button class="btn btn-ghost" data-action="copy" data-text="${esc(spot.address)}">${esc(COPY.copyAddress)}</button>`
-      }
-      ${coords ? nearby : ''}
-      ${coords && hasCourse ? `<button class="btn btn-ghost" data-action="open-course" data-id="${spot.id}">${esc(COPY.courseButton)}</button>` : ''}
-      ${sameWork}
-      ${source()}
+  const noCoords = coords
+    ? ''
+    : `<p class="notice">${esc(COPY.noCoords)}</p>
+       <button class="btn btn-ghost" data-action="copy" data-text="${esc(spot.address)}">${esc(COPY.copyAddress)}</button>`;
+
+  // 후기는 아직 만들지 않았다(2026-11-01 사용자 요청: '준비중' 안내로 막아 둔다)
+  const reviews = `<section class="stack-8"><h2 class="section-title">${esc(COPY.reviewsTitle)}</h2><p class="notice">${esc(COPY.reviewsSoon)}</p></section>`;
+
+  return `<div class="spot-body page-body">${noCoords}${worksHere}${nearby}${course}${reviews}${source()}</div>`;
+}
+
+export function spotScreenMobile(spot, ctx, { mapOn, level }) {
+  if (!mapOn) {
+    return `<div class="map-ctrl is-static" style="padding-left:var(--gutter);padding-right:var(--gutter)">
+      <button class="btn-icon" data-action="back" aria-label="뒤로 가기">${icon.back()}</button></div>
+      <section class="sheet is-static">${spotHead(spot)}<div class="sheet-body">${spotBody(spot, ctx)}</div></section>`;
+  }
+  return `
+    ${topBrand()}
+    <div class="map-ctrl is-below">
+      <button class="btn-icon" data-action="back" aria-label="뒤로 가기">${icon.back()}</button>
     </div>
+    <section class="sheet" id="sheet" data-level="${level}">
+      <div class="sheet-grip" data-drag><span></span></div>
+      <div data-drag>${spotHead(spot, { toggle: level === 'expanded' ? 'down' : 'up' })}</div>
+      <div class="sheet-body" id="sheet-body">${spotBody(spot, ctx)}</div>
+    </section>`;
+}
+
+// PC: 지도 위 상세 패널
+export function spotDetail(spot, ctx) {
+  return `<article class="page">
+    <div class="lowbar is-close"><button class="btn-icon" data-action="close-panel" aria-label="닫기">${icon.close()}</button></div>
+    ${spotHead(spot)}
+    ${spotBody(spot, ctx)}
   </article>`;
 }
 
@@ -267,17 +322,23 @@ export function courseBody(course, { showRouteMap }) {
 }
 
 // ── S5 ──
-export function placeScreen(place, { spot, distance, canMap = false }) {
-  const back = `<button class="btn-icon" data-action="back" aria-label="뒤로 가기">${icon.back()}</button>`;
+// 관광지·식당·카페 상세는 바텀시트가 아니라 새 페이지다(2026-11-01 사용자 요청). X를 누르면 바로 전 화면으로 돌아간다.
+// 모바일은 맨 위 줄(서비스명·테마 버튼 자리)을 X 하나로 바꾼다(2026-11-01 사용자 요청). X는 테두리 없는 아이콘이다.
+// PC는 지도 위 패널이라 위 줄이 없고, X는 사진 오른쪽 위(사진이 없으면 낮은 줄의 오른쪽)에 둔다.
+export function placeScreen(place, { spot, distance, canMap = false, pc = false }) {
+  const closeBtn = (bare) => `<button class="btn-icon${bare ? ' is-bare' : ''}" data-action="back" aria-label="${esc(COPY.close)}">${icon.close()}</button>`;
+  const bar = pc ? '' : `<header class="page-top is-close">${closeBtn(true)}</header>`;
+  const photoClose = pc ? closeBtn(false) : '';
   const top = place.photo
-    ? `<div class="photo-wrap"><img class="photo" src="${esc(place.photo)}" alt="" data-fallback="remove-photo">${back}</div>`
-    : `<div class="lowbar">${back}</div>`;
+    ? `<div class="photo-wrap"><img class="photo" src="${esc(place.photo)}" alt="" data-fallback="remove-photo">${photoClose}</div>`
+    : pc ? `<div class="lowbar is-close">${closeBtn(false)}</div>` : '';
   const intro = place.intro
     ? `<section class="stack-8"><h2 class="section-title">${esc(COPY.intro)}</h2><p class="clamp4" data-expand aria-expanded="false">${esc(place.intro)}</p></section>`
     : '';
   // TODO(열린 결정: S5 출처 문구) COPY.placeSource가 비어 있으면 칸을 만들지 않는다.
   const src = COPY.placeSource ? `<p class="source">${esc(COPY.placeSource)}</p>` : '';
   return `<article class="page">
+    ${bar}
     ${top}
     <div class="page-body">
       <div class="stack-12">
@@ -309,10 +370,13 @@ export function pcFrame(work, { selectedId }) {
   return `
     <header class="pc-top">
       <button class="brand" data-action="home">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></button>
-      <label class="search"><span class="sr-only">작품 검색</span>
-        <input id="pc-q" type="search" autocomplete="off" placeholder="${esc(COPY.searchPlaceholder)}" value="${esc(work.title)}">
-        <span class="btn-icon" aria-hidden="true">${icon.search()}</span>
-      </label>
+      <div class="pc-search">
+        <label class="search"><span class="sr-only">작품 검색</span>
+          <input id="pc-q" type="search" autocomplete="off" placeholder="${esc(COPY.searchPlaceholder)}" value="${esc(work.title)}">
+          <span class="btn-icon" aria-hidden="true">${icon.search()}</span>
+        </label>
+        <button class="btn-text" type="button" data-action="cancel-select">${esc(COPY.cancel)}</button>
+      </div>
       ${themeButton()}
     </header>
     <aside class="pc-list" id="pc-list">${workHead(work)}<div class="sheet-body">${spotList(work, selectedId)}</div></aside>

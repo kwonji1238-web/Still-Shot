@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { buildIndex, adaptRestaurants } from '../src/data.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { buildIndex, adaptRestaurants, spotsAtSamePlace } from '../src/data.js';
 import { searchWorks, findWorkByName, normalize } from '../src/search.js';
 import { distanceM, formatDistance } from '../src/geo.js';
 import { previewCandidates, courseCandidates } from '../src/candidates.js';
 import { ruleCourse, validateAiCourse, cleanNote } from '../src/course.js';
-import { TRENDING } from '../src/settings.js';
+import { FEATURED } from '../src/settings.js';
+import { pickFeatured } from '../src/featured.js';
 
 const read = (f) => JSON.parse(readFileSync(new URL(`../data/${f}`, import.meta.url)));
 const db = buildIndex({
@@ -49,8 +50,50 @@ test('데이터: 식당·카페 사진은 주소가 있을 때만', () => {
   assert.ok(food.filter((p) => !p.thumb).every((p) => p.photo === null));
 });
 
-test('요즘 뜨는 촬영지 3편이 데이터에 있다', () => {
-  for (const t of TRENDING) assert.ok(findWorkByName(db.works, t), t);
+test('검색 화면 고정 촬영지가 데이터에 있고, 섹션마다 두 곳이 나온다', () => {
+  const f = pickFeatured(db.spots, { rand: () => 0.5 });
+  FEATURED.trending.forEach((x, i) => assert.equal(f.trending[i].spot.name, x.place));
+  FEATURED.photo.forEach((x, i) => assert.equal(f.photo[i].spot.name, x.place));
+  FEATURED.photo.forEach((x, i) => assert.equal(f.photo[i].spot.work, x.work));
+  assert.equal(f.trending.length, 2);
+  assert.equal(f.photo.length, 2);
+  const all = [...f.trending, ...f.photo];
+  assert.equal(new Set(all.map((c) => c.spot.id)).size, 4);
+  assert.ok(all.every((c) => c.spot.lat !== null));
+});
+
+test('검색 화면 사진: 고정 촬영지의 images/ 파일이 실제로 있고, 도모헌에는 출처 문구가 있다', () => {
+  const f = pickFeatured(db.spots, { rand: () => 0.5 });
+  assert.equal(f.trending[0].credit, '[출처 : 부산시]');
+  for (const c of [...f.trending, ...f.photo]) {
+    assert.ok(c.image?.startsWith('images/'), c.label);
+    assert.ok(existsSync(new URL(`../${c.image}`, import.meta.url)), c.image);
+  }
+});
+
+test('촬영지: 같은 장소의 작품이 한 번씩, 이 촬영지가 맨 앞', () => {
+  const spot = db.spots.find((s) => s.work === '범죄와의 전쟁: 나쁜놈들 전성시대' && s.name === '문화공감수정(정란각)');
+  const list = spotsAtSamePlace(spot, db.spots);
+  assert.equal(list[0].id, spot.id);
+  assert.ok(list.length >= 5);
+  assert.equal(new Set(list.map((s) => s.work)).size, list.length);
+  assert.ok(list.every((s) => s.name === spot.name && s.address === spot.address));
+});
+
+test('촬영지: 장면 설명은 scenes.json에 있는 촬영지에만 붙는다', () => {
+  const scenes = read('scenes.json');
+  const withScenes = buildIndex({ cinemap: read('cinemap.json'), attractions: [], restaurants: [], scenes });
+  const hit = withScenes.spots.filter((s) => s.scene);
+  assert.equal(hit.length, Object.keys(scenes).length);
+  assert.ok(hit.every((s) => scenes[`${s.work}|${s.name}`] === s.scene));
+  assert.ok(db.spots.every((s) => s.scene === null));
+});
+
+test('촬영지 썸네일: 도모헌(부산시 열린행사장)에만 사진과 출처가 있다', () => {
+  const withPhoto = db.spots.filter((s) => s.photo);
+  assert.ok(withPhoto.length >= 1);
+  assert.ok(withPhoto.every((s) => s.name === '부산시 열린행사장' && s.photo === 'images/domoheon.jpg' && s.photoCredit === '[출처 : 부산시]'));
+  assert.ok(existsSync(new URL('../images/domoheon.jpg', import.meta.url)));
 });
 
 test('검색: 띄어쓰기 무시 부분 일치, 앞부분 일치가 위', () => {

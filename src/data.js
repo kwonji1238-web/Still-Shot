@@ -9,6 +9,8 @@
 //   menu?               // 식당·카페만: 대표메뉴(화면에는 쓰지 않고 AI 설명의 근거로만 씀)
 //   geocodeStatus?      // 촬영지만: 원본 '변환상태' (성공 / 키워드검색성공 / 실패)
 // }
+import { SPOT_PHOTOS } from './settings.js';
+
 
 const REGION = 'busan';
 
@@ -94,10 +96,26 @@ export function buildWorks(spots) {
   return works;
 }
 
+// 같은 장소(이름·주소가 같음)에서 촬영된 작품들의 촬영지. 이 촬영지가 맨 앞이고, 작품은 한 번씩만 나온다.
+export function spotsAtSamePlace(spot, spots) {
+  const seen = new Set();
+  return [spot, ...spots.filter((s) => s.name === spot.name && s.address === spot.address)].filter((s) => {
+    if (seen.has(s.work)) return false;
+    seen.add(s.work);
+    return true;
+  });
+}
+
 const POSTER_BASE = 'https://image.tmdb.org/t/p/w185';
 
-export function buildIndex({ cinemap, attractions, restaurants, posters = {} }) {
+export function buildIndex({ cinemap, attractions, restaurants, posters = {}, scenes = {} }) {
   const spots = adaptSpots(cinemap);
+  // 장면 설명은 data/scenes.json("작품명|장소명" → 글)에 있는 촬영지에만 붙는다. 없으면 그 줄이 화면에서 빠진다.
+  for (const s of spots) {
+    s.scene = scenes[`${s.work}|${s.name}`] || null;
+    s.photo = SPOT_PHOTOS[s.name]?.image || null;
+    s.photoCredit = SPOT_PHOTOS[s.name]?.credit || null;
+  }
   const works = buildWorks(spots);
   // 포스터는 data/posters.json(scripts/posters.mjs가 만든다)에 있는 작품만 붙는다. 없으면 빈 프레임.
   // 같은 파일에 개봉연도·장르·출연진·줄거리도 있다. 있는 값만 붙고, 없으면 그 줄이 화면에서 빠진다.
@@ -122,10 +140,11 @@ export async function loadData(base = 'data/') {
   };
   // 포스터 파일은 없어도 된다(없으면 포스터 없이 동작)
   const posters = await get('posters.json').catch(() => ({}));
+  const scenes = await get('scenes.json').catch(() => ({}));
   const [cinemap, attractions, restaurants] = await Promise.all([
     get('cinemap.json'),
     get('attractions.json'),
     get('restaurants.json'),
   ]);
-  return buildIndex({ cinemap, attractions, restaurants, posters });
+  return buildIndex({ cinemap, attractions, restaurants, posters, scenes });
 }

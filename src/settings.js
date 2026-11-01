@@ -1,3 +1,7 @@
+// 부산 안인지 가리는 대략의 범위(남서·북동 모서리). 본인 위치가 이 안이면 안내 팝업을 띄우지 않는다.
+// TODO(열린 결정: 부산 범위) 행정구역 경계가 아니라 사각형 근사값이다.
+export const BUSAN_BOUNDS = { south: 34.88, west: 128.75, north: 35.40, east: 129.32 };
+
 // 확정 문구와 [제안]·열린 결정 값을 한 곳에 모은다. 바꿀 때는 이 파일만 고친다.
 
 // 확정 문구 (design.md 5장 "화면별 문구", naming.md)
@@ -5,10 +9,13 @@ export const COPY = {
   // 상단 서비스명(영문 워드마크). 한글 이름은 스틸스팟(naming.md), 화면 상단에는 이 표기를 쓴다.
   wordmark: 'STILL-SPOT',
   heroCopy: '영화 속 그 장소로 이어지는 길',
-  searchPlaceholder: '어떤 작품 속 그곳인가요?',
+  searchPlaceholder: '국내 영화나 드라마를 검색하세요',
   trendingLabel: '요즘 뜨는 촬영지',
   matchingLabel: '일치하는 작품',
-  noResult: '아직 이 작품의 촬영지를 못 찾았어요. 다른 작품 이름으로 검색해 보세요',
+  // TODO(열린 결정: 검색 결과 없음 문구) 2026-11-01 와이어프레임 이미지의 예시 문구를 그대로 썼다.
+  noResult: '일치하는 작품, 촬영지가 없어요',
+  photoSpotLabel: '사진 남기기 좋은 촬영지',
+  backToMap: '지도로 돌아가기',
   noCoords: '지도에는 표시할 수 없어요. 주소만 안내해요',
   courseLoading: '다음 장면을 고르고 있어요',
   courseDone: '찾았다! 이 근처 코스예요',
@@ -19,7 +26,10 @@ export const COPY = {
   courseButton: '이 근처 코스 보기',
   courseTopbar: '근처 코스',
   copyAddress: '주소 복사',
-  sameWorkTitle: '같은 작품의 다른 촬영지',
+  // S3(촬영지 바텀시트, 2026-11-01 와이어프레임)
+  worksHereTitle: '이 장소에서 촬영된 작품',
+  reviewsTitle: '다녀온 후기',
+  reviewsSoon: '준비중이에요',
   intro: '소개',
   cancel: '취소',
   source:
@@ -33,6 +43,13 @@ export const COPY = {
   // TODO(열린 결정: 오류 문구) design.md 5장의 예시 문구. 확정 아님.
   loadError: '정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요',
   retry: '다시 시도',
+  // v1 첫 화면의 "본인 위치" 버튼. 지금은 위치를 받지 않고 안내 팝업만 띄운다(2026-11-01 사용자 요청).
+  // TODO(열린 결정: 본인 위치 버튼·안내 팝업 문구) 사용자가 정한 내용(부산만 서비스)을 해요체로 옮긴 임시 문구. 화면 문구에는 지역명을 쓰지 않는다는 규칙의 예외라 확인이 필요하다.
+  locate: '본인 위치',
+  locateDialog: '현재는 부산 지역만 서비스하고 있어요',
+  locateBody: '원활한 탐색을 위해 부산 지역으로 이동할까요?',
+  locateGo: '이동하기',
+  close: '닫기',
   // TODO(열린 결정: 테마 전환 버튼의 문구) design.md·naming.md에 없는 안내 문구라 임시로 정했다. 아이콘 버튼의 접근성 이름으로만 쓴다.
   themeToDark: '다크 모드로 전환',
   themeToLight: '라이트 모드로 전환',
@@ -40,11 +57,29 @@ export const COPY = {
 
 export const KIND_LABEL = { spot: '촬영지', attraction: '관광지', restaurant: '식당', cafe: '카페' };
 
-// "요즘 뜨는 촬영지" 고정 2편. 팀이 고른 목록이고 순위가 아니다.
-// 데이터의 작품명(opusNm)과 띄어쓰기를 무시하고 비교한다. 데이터에는 플랫폼 이름이 붙어 있다
-// (2026-10-29 확인: "디즈니+ 파인: 촌뜨기들", "서울의 봄"). 데이터에 없으면 목록에서 빠진다.
-export const TRENDING = ['디즈니+ 파인: 촌뜨기들', '서울의 봄'];
-// TODO(열린 결정: "요즘 뜨는 촬영지" 한 줄의 이동 대상) 지금은 제안대로 작품 단위(S2)로 간다.
+// 검색 화면의 고정 촬영지(2026-11-01 사용자 지정). 섹션마다 두 곳을 보이고, 고정이 모자란 자리는 무작위로 채운다. 순위가 아니다.
+// work·place는 데이터(cinemap.json)의 작품명·장소명 그대로이고, label은 카드에 보일 이름이다. 데이터에 없으면 그 곳은 빠진다.
+// 사진: image는 images/에 둔 파일이다(데이터에 촬영지 사진이 없어서, 출처는 images/CREDITS.md). credit이 있으면 카드에 그 문구를 그대로 보인다.
+// TODO(열린 결정: 카드를 눌렀을 때 이동 대상) 지금은 그 촬영지의 지도 화면(S2)에서 핀을 강조한다. 촬영지 바텀시트를 고칠 때 함께 정한다.
+const DOMOHEON_PHOTO = { image: 'images/domoheon.jpg', credit: '[출처 : 부산시]' };
+
+// 촬영지 상세(S3) 맨 앞 썸네일 사진. 키는 촬영지 이름이고 같은 이름의 촬영지(모든 작품)에 붙는다. 없는 촬영지는 서비스 로고.
+// 데이터에 촬영지 사진이 없어서 images/에 둔 파일만 쓴다(2026-11-01 사용자 지정: 도모헌).
+export const SPOT_PHOTOS = { '부산시 열린행사장': DOMOHEON_PHOTO };
+
+export const FEATURED = {
+  trending: [
+    // 도모헌 사진은 사용자가 넣은 파일이고, 출처 문구는 카드에 그대로 보인다(2026-11-01 사용자 요청).
+    { work: 'JTBC 재벌집 막내아들', place: '부산시 열린행사장', label: '부산시장 관사(현 도모헌)', image: DOMOHEON_PHOTO.image, credit: DOMOHEON_PHOTO.credit },
+    // 흰여울문화마을을 찍은 작품은 6편이다(효심이네 각자도생, 도라이버, 암수살인, 변호인 등). 그중 하나를 골랐다.
+    { work: '변호인', place: '흰여울문화마을', image: 'images/huinnyeoul.jpg' },
+  ],
+  photo: [
+    { work: '범죄와의 전쟁: 나쁜놈들 전성시대', place: '문화공감수정(정란각)', label: '정란각', image: 'images/jeongrangak.jpg' },
+    // 바닷가에 있는 촬영지(사용자 요청). 광안리해수욕장을 찍은 작품은 6편이다(블랙 팬서, 라켓소년단, 챔피언 등).
+    { work: '블랙 팬서', place: '광안리해수욕장', image: 'images/gwangalli.jpg' },
+  ],
+};
 
 // TODO(열린 결정: 코스 후보 반경) PRD 6장. 1·2·3km 채움 비율을 계산한 뒤 정한다. 지금 값은 임시.
 export const NEARBY_RADIUS_M = 3000;
@@ -62,7 +97,5 @@ export const AI_TIMEOUT_MS = 9500; // 서버 함수의 대기 한도(netlify/fun
 // [제안] 토스트 표시 시간
 export const TOAST_MS = 2000;
 
-// [제안] "같은 작품의 다른 촬영지" 칩 수
-export const SAME_WORK_CHIPS = 3;
 
 // TODO(열린 결정: 경로 지도 높이) PRD 6장 제안 약 200px. styles.css의 --route-map-h와 같이 바꾼다.

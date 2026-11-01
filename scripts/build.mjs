@@ -15,11 +15,15 @@ for (const f of ['favicon.svg', 'favicon.ico', 'favicon-16.png', 'favicon-32.png
 }
 cpSync('icon/favicon.ico', `${OUT}/favicon.ico`);
 cpSync('src', `${OUT}/src`, { recursive: true });
+// 검색 화면의 고정 촬영지 사진(src/settings.js의 FEATURED)
+if (existsSync('images')) cpSync('images', `${OUT}/images`, { recursive: true });
 for (const f of ['cinemap.json', 'attractions.json', 'restaurants.json']) {
   cpSync(`data/${f}`, `${OUT}/data/${f}`);
 }
 // 포스터 주소 파일은 scripts/posters.mjs를 돌린 뒤에만 있다(없어도 동작한다)
 if (existsSync('data/posters.json')) cpSync('data/posters.json', `${OUT}/data/posters.json`);
+// 촬영지 장면 설명(data/scenes.json)도 있을 때만 복사한다
+if (existsSync('data/scenes.json')) cpSync('data/scenes.json', `${OUT}/data/scenes.json`);
 
 // 카카오 JavaScript 키는 브라우저에서 쓰는 공개 키라 config.js에 들어간다.
 // 값은 Netlify 환경변수 KAKAO_JS_KEY에서 읽고, 저장소에는 넣지 않는다.
