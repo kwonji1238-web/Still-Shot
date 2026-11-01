@@ -58,7 +58,7 @@ const kindDist = (kind, m) => `${KIND_LABEL[kind]} · 직선 ${dist(m)}`;
 const source = () => `<p class="source">${esc(COPY.source)}</p>`;
 // 바텀시트가 올라와 있어도 맨 위의 서비스명 줄(로고·테마 버튼)은 그대로 둔다(2026-11-01 사용자 요청). 홈의 상단 메뉴와 같은 모양.
 const topBrand = () =>
-  `<header class="home-top"><span class="brand-lock">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></span>${themeButton()}</header>`;
+  `<header class="home-top"><button class="brand-lock" type="button" data-action="home" aria-label="${esc(COPY.goHome)}">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></button>${themeButton()}</header>`;
 const chev = () => `<span class="chev">${icon.chev()}</span>`;
 
 // ── S1·E1·E2 ──
@@ -67,7 +67,7 @@ export function homeScreen(q, { credit = false } = {}) {
   <div class="home" id="home">
     <header class="home-top">
       <button class="btn-icon is-bare home-back" type="button" data-action="search-cancel" aria-label="${esc(COPY.backToMap)}">${icon.back()}</button>
-      <span class="brand-lock">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></span>${themeButton()}
+      <button class="brand-lock" type="button" data-action="home" aria-label="${esc(COPY.goHome)}">${logoMark()}<span class="wordmark" lang="en">${esc(COPY.wordmark)}</span></button>${themeButton()}
     </header>
     <h1 class="sr-only">${esc(COPY.heroCopy)}</h1>
     <form class="search-row" role="search" data-action="search-submit">

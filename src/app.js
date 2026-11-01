@@ -234,7 +234,7 @@ function closeSearch() {
 
 // 본인 위치: 지도를 그 위치로 옮기고 점을 찍는다. 부산 밖이거나 위치를 못 받으면 안내 팝업을 띄운다(이동하기 → 부산 전체).
 // X로 닫으면 지도는 그 자리에 그대로 둔다. 위치는 저장하지 않고 서버로 보내지 않는다.
-const HOME_PADDING = [152, 24, 88, 24]; // 위쪽은 상단 메뉴와 검색창, 아래쪽은 본인 위치 버튼이 가리는 만큼
+const HOME_PADDING = [152, 24, 136, 24]; // 위쪽은 상단 메뉴와 검색창, 아래쪽은 본인 위치 버튼이 가리는 만큼
 const inBusan = (p) => p.lat >= BUSAN_BOUNDS.south && p.lat <= BUSAN_BOUNDS.north && p.lng >= BUSAN_BOUNDS.west && p.lng <= BUSAN_BOUNDS.east;
 
 function locateMe() {
@@ -641,7 +641,13 @@ document.addEventListener('click', (e) => {
     case 'open-course': return navigate(href.course(id));
     case 'open-place': return navigate(href.place(r.id, id));
     case 'view-on-map': return navigate(href.work(app.db.byId.get(id).work, id));
-    case 'home': return navigate(href.home());
+    case 'home': {
+      // 첫 화면에서 누르면 검색을 닫고 지도를 처음 상태(촬영지 전체)로 되돌린다. 다른 화면에서는 첫 화면으로 간다.
+      if (app.route.name !== 'home') return navigate(href.home());
+      closeSearch();
+      if (app.main) app.main.fit(app.db.spots.filter((s) => s.lat !== null), HOME_PADDING);
+      return;
+    }
     case 'cancel-select': return backToMap();
     case 'search-cancel': return closeSearch();
     case 'pick-spot-card': return pickHomePin(app.db.byId.get(id));
